@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import os
 
@@ -65,6 +66,7 @@ class CodeBuilder:
 
 class TemplateLoader:
     """A class to load templates from a given directory."""
+
     def __init__(self, base_path: str):
         """Initialize the loader with a base path for templates."""
         if not os.path.isdir(base_path):
@@ -89,7 +91,7 @@ class Templite:
     def __init__(self,
                  text: str,
                  loader: TemplateLoader | None = None,
-                 *contexts: dict[str, Any]) -> None:
+                 *contexts: dict[str, Any]) -> None:  # noqa: C901
         """
         Construct a Templite with the given `text`.
 
@@ -371,6 +373,7 @@ class Router:
 
 NOT_FOUND = '404 Not Found'
 NOT_ALLOWD = '405 Method Not Allowed'
+PLAIN_TEXT = ('Content-Type', 'text/plain')
 
 
 class Request:
@@ -390,8 +393,9 @@ class PyPette:
     There is No HTTPRequest Object and No HTTPResponse object.
     """
 
-    def __init__(self):
+    def __init__(self, json_encoder=None):
         self.resolver = Router()
+        self.json_encoder = json_encoder
 
     def __call__(self, environ, start_response):
         try:
@@ -400,20 +404,25 @@ class PyPette:
                     environ.get('REQUEST_METHOD'))
 
         except (NoPathFoundError, NoHandlerError):
-            start_response(NOT_FOUND, [('Content-Type', 'text/plain')])
+            start_response(NOT_FOUND, [PLAIN_TEXT])
             return [NOT_FOUND.encode('utf-8')]
 
         except MethodMisMatchError:
             start_response(NOT_ALLOWD,
-                           [('Content-Type', 'text/plain')])
+                           [PLAIN_TEXT])
             return [NOT_ALLOWD.encode('utf-8')]
 
         request = Request(environ)
         response = callback(request, *path_params, **query)
-        start_response('200 OK', [('Content-Type', 'text/plain'),
-                                  ('Content-Length', str(len(response)))
-                                  ]
-                       )
+
+        if isinstance(response, dict):
+            response = json.dumps(response, cls=self.json_encoder)
+            headers = [('Content-Type', 'application/json')]
+        else:
+            headers = [PLAIN_TEXT]
+
+        headers.append(('Content-Length', str(len(response))))
+        start_response('200 OK', headers)
         return [response.encode('utf-8')]
 
     def add_route(self, path, callable, method='GET'):
@@ -429,8 +438,15 @@ class PyPette:
 
 if __name__ == "__main__":
     from wsgiref.simple_server import make_server
+    from datetime import datetime, date
 
-    app = PyPette()
+    class DateTimeISOEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            return super().default(obj)
+
+    app = PyPette(json_encoder=DateTimeISOEncoder)
 
     def hello(request):
         return "hello world"
@@ -438,6 +454,11 @@ if __name__ == "__main__":
     @app.route("/hello/:name")
     def hello_name(request, name):
         return f"hello {name}"
+
+    @app.route("/api/")
+    def hello_json(request):
+        return {"something": "you can json serialize ...",
+                "today is": date.today(), "now": datetime.now()}
 
     app.add_route("/", hello)
 
