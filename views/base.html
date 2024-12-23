@@ -1,0 +1,17 @@
+<h1>Welcome, {{ user_name.upper }}!</h1>
+
+{% if is_admin %}
+<p>You have admin privileges.</p>
+{% else %}
+<p>You are a regular user.</p>
+{% endif %}
+
+<h2>Your Hobbies</h2>
+{% for hobby in hobbies %}
+<p>- {{ hobby }}</p>
+{% endfor %}
+
+<p>Below is some additional content from the included template:</p>
+{% include "test.html" %}
+
+<p>a reversed text {{ user_name|format_price }}</p>

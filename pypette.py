@@ -254,6 +254,15 @@ class Templite:
         return value
 
 
+class TemplateEngine:
+
+    def __init__(self, loader: TemplateLoader):
+        self.loader = loader
+
+    def load(self, template: str):
+        return Templite(self.loader.get(template), self.loader)
+
+
 class TrieNode:
     def __init__(self, path="/", method="GET"):
         self.children = {}
@@ -393,9 +402,10 @@ class PyPette:
     There is No HTTPRequest Object and No HTTPResponse object.
     """
 
-    def __init__(self, json_encoder=None):
+    def __init__(self, json_encoder=None, template_path="views"):
         self.resolver = Router()
         self.json_encoder = json_encoder
+        self.templates = TemplateEngine(TemplateLoader(template_path))
 
     def __call__(self, environ, start_response):
         try:
@@ -459,6 +469,16 @@ if __name__ == "__main__":
     def hello_json(request):
         return {"something": "you can json serialize ...",
                 "today is": date.today(), "now": datetime.now()}
+
+    @app.route('/fancy')
+    def view_with_template(request):
+        return app.templates.load('base.html').render({
+            "user_name": "Admin",
+            "is_admin": True,
+            "hobbies": ["Reading", "Cooking", "Cycling"],
+            "current_year": 2024,
+            "format_price": lambda x: x.upper(),
+            })
 
     app.add_route("/", hello)
 
