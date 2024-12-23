@@ -373,6 +373,16 @@ NOT_FOUND = '404 Not Found'
 NOT_ALLOWD = '405 Method Not Allowed'
 
 
+class Request:
+    """A thin wrapper around environ"""
+
+    def __init__(self, environ):
+        self._environ = environ
+
+    def __get__(self, key):
+        self._environ[key.upper()]
+
+
 class PyPette:
     """
     A pico WSGI Application framework with API inspired by Bottle.
@@ -389,7 +399,7 @@ class PyPette:
                     environ.get('PATH_INFO'),
                     environ.get('REQUEST_METHOD'))
 
-        except NoPathFoundError:
+        except (NoPathFoundError, NoHandlerError):
             start_response(NOT_FOUND, [('Content-Type', 'text/plain')])
             return [NOT_FOUND.encode('utf-8')]
 
@@ -398,53 +408,42 @@ class PyPette:
                            [('Content-Type', 'text/plain')])
             return [NOT_ALLOWD.encode('utf-8')]
 
-        except NoHandlerError:
-            start_response(NOT_ALLOWD,
-                           [('Content-Type', 'text/plain')])
-            return [NOT_ALLOWD.encode('utf-8')]
+        request = Request(environ)
+        response = callback(request, *path_params, **query)
+        start_response('200 OK', [('Content-Type', 'text/plain'),
+                                  ('Content-Length', str(len(response)))
+                                  ]
+                       )
+        return [response.encode('utf-8')]
 
-        start_response('200 OK', [('Content-Type', 'text/plain')])
-        return callback(*path_params, **query)
+    def add_route(self, path, callable, method='GET'):
+        self.resolver.add_route(path, callable, method)
 
-    def add_route(self, path, wrapped, callable):
-        self.resolver.add(path, wrapped, callable)
-
-    def route(self, path, method):
+    def route(self, path, method='GET'):
         def decorator(wrapped):
-            self.add_route(path, wrapped, method)
+            self.resolver.add_route(path, wrapped, method)
             return wrapped
 
         return decorator
 
 
 if __name__ == "__main__":
-    # Example usage
-    router = Router()
+    from wsgiref.simple_server import make_server
 
-    # Define some test handlers
-    def foo():
-        return "Handler for /foo"
+    app = PyPette()
 
-    def foo_name(name, **query_params):
-        return f"Handler for /foo/:name with name={name}, query_params={query_params}"  # noqa
+    def hello(request):
+        return "hello world"
 
-    def bar_baz(a=None, b=None):
-        return f"Handler for /bar/baz with a={a}, b={b}"
+    @app.route("/hello/:name")
+    def hello_name(request, name):
+        return f"hello {name}"
 
-    # Add routes
-    router.add_route("/foo", foo, method="GET")
-    router.add_route("/foo/:name", foo_name, method="GET")
-    router.add_route("/bar/baz", bar_baz, method="POST")
+    app.add_route("/", hello)
 
-    # Print the Trie structure
-    print("Trie structure:")
-    router.print_trie()
+    app.resolver.print_trie()
+    httpd = make_server('', 8000, app)
+    print("Serving on port 8000...")
 
-    # Dispatch requests
-    print("\nDispatching requests:")
-    print(router.dispatch("/foo", method="GET"))  # Matches /foo
-    print(router.dispatch("/foo/john?a=42&b=hello", method="GET"))  # Matches /foo/:name
-    try:
-        print(router.dispatch("/bar/baz?a=3&b=4", method="GET"))  # Should fail due to method mismatch
-    except ValueError as e:
-        print(e)
+    # Serve until process is killed
+    httpd.serve_forever()
