@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import http.cookies
+import io
 import json
 import re
 import os
+import wsgiref
 
+from email.parser import HeaderParser
 import urllib.parse
 
 from typing import (Any, Callable, cast)
@@ -263,6 +267,480 @@ class TemplateEngine:
         return Templite(self.loader.get(template), self.loader)
 
 
+class QueryDict(object):
+    """
+    Simulates a dict-like object for query parameters.
+
+    Because HTTP allows for query strings to provide the same name for a
+    parameter more than once, this object smoothes over the day-to-day usage
+    of those queries.
+
+    You can act like it's a plain `dict` if you only need a single value.
+
+    If you need all the values, `QueryDict.getlist` & `QueryDict.setlist`
+    are available to expose the full list.
+    """
+
+    def __init__(self, data=None):
+        self._data = data
+
+        if self._data is None:
+            self._data = {}
+
+    def __str__(self):
+        return "<QueryDict: {} keys>".format(len(self._data))
+
+    def __repr__(self):
+        return str(self)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __contains__(self, name):
+        return name in self._data
+
+    def __getitem__(self, name):
+        values = self.getlist(name)
+        return values[0]
+
+    def __setitem__(self, name, value):
+        self._data.setdefault(name, [])
+        self._data[name][0] = value
+
+    def get(self, name, default=None):
+        """
+        Tries to fetch a value for a given name.
+
+        If not found, this returns the provided `default`.
+
+        Args:
+            name (str): The name of the parameter you'd like to fetch
+            default (bool, defaults to `None`): The value to return if the
+                `name` isn't found.
+
+        Returns:
+            Any: The found value for the `name`, or the `default`.
+        """
+        try:
+            return self[name]
+        except KeyError:
+            return default
+
+    def getlist(self, name):
+        """
+        Tries to fetch all values for a given name.
+
+        Args:
+            name (str): The name of the parameter you'd like to fetch
+
+        Returns:
+            list: The found values for the `name`.
+
+        Raises:
+            KeyError: If the `name` isn't found
+        """
+        if name not in self._data:
+            raise KeyError("{} not found".format(name))
+
+        return self._data[name]
+
+    def setlist(self, name, values):
+        """
+        Sets all values for a given name.
+
+        Args:
+            name (str): The name of the parameter you'd like to fetch
+            values (list): The list of all values
+
+        Returns:
+            None
+        """
+        self._data[name] = values
+
+    def keys(self):
+        """
+        Returns all the parameter names.
+
+        Returns:
+            list: A list of all the parameter names
+        """
+        return self._data.keys()
+
+    def items(self):
+        """
+        Returns all the parameter names & values.
+
+        Returns:
+            list: A list of two-tuples. The parameter names & the *first*
+                value for that name.
+        """
+        results = []
+
+        for key, values in self._data.items():
+            if len(values) < 1:
+                results.append((key, None))
+            else:
+                results.append((key, values[0]))
+
+        return results
+
+
+class StreamingMultipartParser:
+
+    def __init__(self, content_type, max_memory_size=1024*1024):
+        self.boundary = self._get_boundary(content_type)
+        self.max_memory_size = max_memory_size
+        
+    def _get_boundary(self, content_type):
+        match = re.search(r'boundary=([^;]+)', content_type)
+        return match.group(1).encode('utf-8') if match else None
+
+    def parse_stream(self, stream):
+        print("Starting to parse stream")
+        if not self.boundary:
+            return {}, {}
+
+        data = stream.read()
+        parts = data.split(b'--' + self.boundary)
+        files = {}
+        form_data = {}
+
+        for part in parts[1:-1]:  # Skip first empty and last boundary
+            if b'\r\n\r\n' not in part:
+                continue
+
+            headers_raw, content = part.split(b'\r\n\r\n', 1)
+            headers_str = headers_raw.decode('utf-8').strip()
+
+            name = None
+            filename = None
+            for line in headers_str.splitlines():
+                if line.startswith('Content-Disposition:'):
+                    for param in line.split(';')[1:]:
+                        if '=' in param:
+                            key, value = param.strip().split('=', 1)
+                            value = value.strip('"')
+                            if key == 'name':
+                                name = value
+                            elif key == 'filename':
+                                filename = value
+
+            if filename and name:
+                files[name] = {
+                    'filename': filename,
+                    'content': content.strip(b'\r\n'),
+                    'content-type': 'application/octet-stream'
+                }
+            elif name:
+                form_data[name] = content.strip(b'\r\n').decode('utf-8')
+
+        return files, form_data
+        
+    def _parse_headers(self, header_data):
+        parser = HeaderParser()
+        return parser.parsestr(header_data.decode('utf-8'))
+        
+    def _get_content_params(self, headers):
+        content_disposition = headers.get('Content-Disposition', '')
+        params = dict(param.strip().split('=', 1) for param in 
+                     content_disposition.split(';')[1:] if '=' in param)
+        return (
+            params.get('name', '').strip('"'),
+            params.get('filename', '').strip('"')
+        )
+
+
+class FileDict:
+    def __init__(self):
+        self._files = {}
+        self._parsed = False
+        self._parser = None
+        self._stream = None
+
+    def __getitem__(self, key):
+        if not self._parsed and self._parser and self._stream:
+            self._files, _ = self._parser.parse_stream(self._stream)
+            self._parsed = True
+        return self._files[key]
+
+    def __contains__(self, key):
+        if not self._parsed and self._parser and self._stream:
+            self._files, _ = self._parser.parse_stream(self._stream)
+            self._parsed = True
+        return key in self._files
+
+
+class HTTPRequest:
+    """
+    A request object, representing all the portions of the HTTP request.
+
+    Args:
+        uri (str): The URI being requested.
+        method (str): The HTTP method ("GET|POST|PUT|DELETE|PATCH|HEAD")
+        headers (dict, Optional): The received HTTP headers
+        body (str, Optional): The body of the HTTP request
+        scheme (str, Optional): The HTTP scheme ("http|https")
+        host (str, Optional): The hostname of the request
+        port (int, Optional): The port of the request
+        content_length (int, Optional): The length of the body of the request
+        request_protocol (str, Optional): The protocol of the request
+        cookies (http.cookies.SimpleCookie, Optional): The cookies sent as
+            part of the request.
+    """
+
+    def __init__(
+        self,
+        uri,
+        method,
+        headers=None,
+        body="",
+        scheme="http",
+        host="",
+        port=80,
+        content_length=0,
+        request_protocol="HTTP/1.0",
+        cookies=None,
+        files=None
+    ):
+        self.raw_uri = uri
+        self.method = method.upper()
+        self.body = body
+        self.scheme = scheme
+        self.host = host
+        self.port = int(port)
+        self.content_length = int(content_length)
+        self.request_protocol = request_protocol
+        self._cookies = cookies or http.cookies.SimpleCookie()
+        self._body_stream = io.BytesIO(body.encode('utf-8') if isinstance(body, str) else body)
+        self.COOKIES = {}
+
+        # For caching.
+        self._GET, self._POST, self._PUT = None, None, None
+
+        if not headers:
+            headers = {}
+
+        # `Headers` is specific about wanting a list of tuples, so just doing
+        # `headers.items()` isn't good enough here.
+        self.headers = wsgiref.headers.Headers(
+            [(k, v) for k, v in headers.items()]
+        )
+
+        for key, morsel in self._cookies.items():
+            self.COOKIES[key] = morsel.value
+
+        uri_bits = self.split_uri(self.raw_uri)
+        domain_bits = uri_bits.get("netloc", ":").split(":", 1)
+
+        self.path = uri_bits["path"]
+        self.query = uri_bits.get("query", {})
+        self.fragment = uri_bits.get("fragment", "")
+
+        self.files = FileDict()
+        if self.content_type().startswith('multipart/form-data'):
+            print("Found multipart form request")
+            self.files._parser = StreamingMultipartParser(self.content_type())
+            self.files._stream = self._body_stream
+
+        if not self.host:
+            self.host = domain_bits[0]
+
+        if len(domain_bits) > 1 and domain_bits[1]:
+            self.port = int(domain_bits[1])
+
+    def __str__(self):
+        return "<HttpRequest: {} {}>".format(self.method, self.raw_uri)
+
+    def __repr__(self):
+        return str(self)
+
+    def get_status_line(self):
+        return f"{self.method} {self.path} {self.request_protocol}"
+
+    def split_uri(self, full_uri):
+        """
+        Breaks a URI down into components.
+
+        Args:
+            full_uri (str): The URI to parse
+
+        Returns:
+            dict: A dictionary of the components. Includes `path`, `query`
+                `fragment`, as well as `netloc` if host/port information is
+                present.
+        """
+        bits = urllib.parse.urlparse(full_uri)
+
+        uri_data = {
+            "path": bits.path,
+            "query": {},
+            "fragment": bits.fragment,
+        }
+
+        # We need to do a bit more work to make the query portion useful.
+        if bits.query:
+            uri_data["query"] = urllib.parse.parse_qs(
+                bits.query, keep_blank_values=True
+            )
+
+        if bits.netloc:
+            uri_data["netloc"] = bits.netloc
+
+        return uri_data
+
+    @classmethod
+    def from_wsgi(cls, environ):
+        """
+        Builds a new HttpRequest from the provided WSGI `environ`.
+
+        Args:
+            environ (dict): The bag of YOLO that is the WSGI environment
+
+        Returns:
+            HttpRequest: A fleshed out request object, based on what was
+                present.
+        """
+        headers = {}
+        cookies = {}
+        non_http_prefixed_headers = [
+            "CONTENT-TYPE",
+            "CONTENT-LENGTH",
+            # TODO: Maybe in the future, add support for...?
+            # 'GATEWAY_INTERFACE',
+            # 'REMOTE_ADDR',
+            # 'REMOTE_HOST',
+            # 'SCRIPT_NAME',
+            # 'SERVER_NAME',
+            # 'SERVER_PORT',
+        ]
+
+        for key, value in environ.items():
+            mangled_key = key.replace("_", "-")
+
+            if mangled_key == 'HTTP-COOKIE':
+                cookies = http.cookies.SimpleCookie()
+                cookies.load(value)
+            elif mangled_key.startswith("HTTP-"):
+                headers[mangled_key[5:]] = value
+            elif mangled_key in non_http_prefixed_headers:
+                headers[mangled_key] = value
+
+        body = ""
+        wsgi_input = environ.get("wsgi.input", io.StringIO(""))
+        content_length = environ.get("CONTENT_LENGTH", 0)
+
+        if content_length not in ("", 0):
+            # StringIO & the built-in server have this attribute, but things
+            # like gunicorn do not. Give it our best effort.
+            if not getattr(wsgi_input, "closed", False):
+                body = wsgi_input.read(int(content_length))
+        else:
+            content_length = 0
+
+        return cls(
+            uri=wsgiref.util.request_uri(environ),
+            method=environ.get("REQUEST_METHOD", 'GET'),
+            headers=headers,
+            body=body,
+            scheme=wsgiref.util.guess_scheme(environ),
+            port=environ.get("SERVER_PORT", "80"),
+            content_length=content_length,
+            request_protocol=environ.get("SERVER_PROTOCOL", "HTTP/1.0"),
+            cookies=cookies,
+        )
+
+    def content_type(self):
+        """
+        Returns the received Content-Type header.
+
+        Returns:
+            str: The content-type header or "text/html" if it was absent.
+        """
+        return self.headers.get("Content-Type", 'text/html')
+
+    def _ensure_unicode(self, body):
+        raw_data = urllib.parse.parse_qs(body)
+        revised_data = {}
+
+        # `urllib.parse.parse_qs` can be a very BYTESTRING-Y BOI.
+        # Ensure all the keys/value are Unicode.
+        for key, value in raw_data.items():
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+
+            if isinstance(value, bytes):  # pragma: no cover
+                value = value.decode("utf-8")
+            elif isinstance(value, (list, tuple)):
+                new_value = []
+
+                for v in value:
+                    if isinstance(v, bytes):
+                        v = v.decode("utf-8")
+
+                    new_value.append(v)
+
+                value = new_value
+
+            revised_data[key] = value
+
+        return revised_data
+
+    @property
+    def GET(self):
+        """
+        Returns a `QueryDict` of the GET parameters.
+        """
+        if self._GET is not None:
+            return self._GET
+
+        self._GET = QueryDict(self.query)
+        return self._GET
+
+    @property
+    def POST(self):
+        """
+        Returns a `QueryDict` of the POST parameters from the request body.
+
+        Useless if the body isn't form-encoded data, like JSON bodies.
+        """
+        if self._POST is not None:
+            return self._POST
+
+        self._POST = QueryDict(self._ensure_unicode(self.body))
+        return self._POST
+
+    @property
+    def PUT(self):
+        """
+        Returns a `QueryDict` of the PUT parameters from the request body.
+
+        Useless if the body isn't form-encoded data, like JSON bodies.
+        """
+        if self._PUT is not None:
+            return self._PUT
+
+        self._PUT = QueryDict(self._ensure_unicode(self.body))
+        return self._PUT
+
+    def is_secure(self):
+        """
+        Identifies whether or not the request was secure.
+
+        Returns:
+            bool: True if the environment specified HTTPs, False otherwise
+        """
+        return self.scheme == "https"
+
+    def is_json(self):
+        """
+        Decodes a JSON body if present.
+
+        Returns:
+            dict: The data
+        """
+        return self.content_type() == 'application/json'
+        
+
 class TrieNode:
     def __init__(self, path="/", method="GET"):
         self.children = {}
@@ -385,21 +863,9 @@ NOT_ALLOWD = '405 Method Not Allowed'
 PLAIN_TEXT = ('Content-Type', 'text/plain')
 
 
-class Request:
-    """A thin wrapper around environ"""
-
-    def __init__(self, environ):
-        self._environ = environ
-
-    def __get__(self, key):
-        self._environ[key.upper()]
-
-
 class PyPette:
     """
     A pico WSGI Application framework with API inspired by Bottle.
-
-    There is No HTTPRequest Object and No HTTPResponse object.
     """
 
     def __init__(self, json_encoder=None, template_path="views"):
@@ -422,7 +888,7 @@ class PyPette:
                            [PLAIN_TEXT])
             return [NOT_ALLOWD.encode('utf-8')]
 
-        request = Request(environ)
+        request = HTTPRequest.from_wsgi(environ)
         response = callback(request, *path_params, **query)
 
         if isinstance(response, dict):
@@ -479,6 +945,12 @@ if __name__ == "__main__":
             "current_year": 2024,
             "format_price": lambda x: x.upper(),
             })
+
+    @app.route('/upload', method='POST')
+    def upload(request):
+        test = request.files['test.txt'] 
+        content = test['content']
+        return {"content": content.decode()}
 
     app.add_route("/", hello)
 
