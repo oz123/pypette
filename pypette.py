@@ -858,6 +858,159 @@ class Router:
         return dict(urllib.parse.parse_qsl(query_string))
 
 
+
+class HTTPResponse(object):
+    """
+    A response object, to make responding to requests easier.
+
+    A lightly-internal `start_response` attribute must be manually set on the
+    response object when in a WSGI environment in order to send the response.
+
+    Args:
+        body (str, Optional): The body of the response. Defaults to "".
+        status_code (int, Optional): The HTTP status code (without the
+            reason). Default is `200`.
+        headers (dict, Optional): The headers to supply with the response.
+            Default is empty headers.
+        content_type (str, Optional): The content-type of the response.
+            Default is `text/plain`.
+    """
+
+    def __init__(
+        self, body="", status_code=200, headers=None, content_type=PLAIN,
+    ):
+        self.body = body
+        self.status_code = int(status_code)
+        self.headers = headers or {}
+        self.content_type = content_type
+        self._cookies = http.cookies.SimpleCookie()
+        self.start_response = None
+
+        self.set_header("Content-Type", self.content_type)
+
+    def __str__(self):
+        return "<HTTPResponse: {}>".format(self.status_code)
+
+    def __repr__(self):
+        return str(self)
+
+    def set_header(self, name, value):
+        """
+        Sets a header on the response.
+
+        If the `Content-Type` header is provided, this also updates the
+        value of `HTTPResponse.content_type`.
+
+        Args:
+            name (str): The name of the header.
+            value (Any): The value of the header.
+        """
+        self.headers[name] = value
+
+        if name.lower() == "content-type":
+            self.content_type = value
+
+    def set_cookie(
+        self,
+        key,
+        value="",
+        max_age=None,
+        expires=None,
+        path="/",
+        domain=None,
+        secure=False,
+        httponly=False,
+        samesite=None,
+    ):
+        """
+        Sets a cookie on the response.
+
+        Takes the same parameters as the `http.cookies.Morsel` object from the stdlib.
+
+        Args:
+            key (str): The name of the cookie.
+            value (Any): The value of the cookie.
+            max_age (int, Optional): How many seconds the cookie lives for.
+                Default is `None`
+                (expires at the end of the browser session).
+            expires (str or datetime, Optional): A specific date/time (in
+                UTC) when the cookie should expire. Default is `None`
+                (expires at the end of the browser session).
+            path (str, Optional): The path the cookie is valid for.
+                Default is `"/"`.
+            domain (str, Optional): The domain the cookie is valid for.
+                Default is `None` (only the domain that set it).
+            secure (bool, Optional): If the cookie should only be served by
+                HTTPS. Default is `False`.
+            httponly (bool, Optional): If `True`, prevents the cookie from
+                being provided to Javascript requests. Default is `False`.
+            samesite (str, Optional): How the cookie should behave under
+                cross-site requests. Options are `SAME_SITE_NONE`,
+                `SAME_SITE_LAX`, and `SAME_SITE_STRICT`.
+                Default is `None`.
+        """
+        morsel = http.cookies.Morsel()
+        # TODO: In the future, signed cookies might be nice here.
+        morsel.set(key, value, value)
+
+        # Allow setting expiry w/ a `datetime`.
+        if hasattr(expires, "strftime"):
+            expires = expires.strftime("%a, %-d %b %Y %H:%M:%S GMT")
+
+        # Always update the meaningful params.
+        morsel.update({"path": path, "secure": secure, "httponly": httponly})
+
+        # Ensure the max-age is an `int`.
+        if max_age is not None:
+            morsel["max-age"] = int(max_age)
+
+        if expires is not None:
+            morsel["expires"] = expires
+
+        if domain is not None:
+            morsel["domain"] = domain
+
+        if PY_VERSION[1] >= 8 and samesite is not None:
+            # `samesite` is only supported in Python 3.8+.
+            morsel["samesite"] = samesite
+
+        self._cookies[key] = morsel
+
+    def delete_cookie(self, key, path="/", domain=None):
+        """
+        Removes a cookie.
+
+        Succeed regards if the cookie is already set or not.
+
+        Args:
+            key (str): The name of the cookie.
+            path (str, Optional): The path the cookie is valid for.
+                Default is `"/"`.
+            domain (str, Optional): The domain the cookie is valid for.
+                Default is `None` (only the domain that set it).
+        """
+        self.set_cookie(
+            key,
+            value="",
+            # We set a Max-Age of `0` to expire the cookie immediately,
+            # thus "deleting" it.
+            max_age=0,
+            path=path,
+            domain=domain,
+        )
+
+    def __str__(self):
+        headers = [(k, v) for k, v in self.headers.items()]
+        possible_cookies = self._cookies.output()
+
+        # Update the headers to include the cookies.
+        if possible_cookies:
+            for line in possible_cookies.splitlines():
+                headers.append(tuple(line.split(": ", 1)))
+
+        self.start_response(status, headers)
+        return [self.body.encode("utf-8")]
+
 NOT_FOUND = '404 Not Found'
 NOT_ALLOWD = '405 Method Not Allowed'
 PLAIN_TEXT = ('Content-Type', 'text/plain')
@@ -873,11 +1026,9 @@ class PyPette:
         self.json_encoder = json_encoder
         self.templates = TemplateEngine(TemplateLoader(template_path))
 
-    def __call__(self, environ, start_response):
+    def _process_request(self, env: dict) -> HTTPRequest:
         try:
-            callback, path_params, query = self.resolver.get(
-                    environ.get('PATH_INFO'),
-                    environ.get('REQUEST_METHOD'))
+            func, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
 
         except (NoPathFoundError, NoHandlerError):
             start_response(NOT_FOUND, [PLAIN_TEXT])
@@ -888,18 +1039,25 @@ class PyPette:
                            [PLAIN_TEXT])
             return [NOT_ALLOWD.encode('utf-8')]
 
-        request = HTTPRequest.from_wsgi(environ)
-        response = callback(request, *path_params, **query)
+        return HTTPRequest.from_wsgi(env)
+
+    def __call__(self, environ, start_response):
+        request = self._process_request(env)
+        response = callback(request, *args, **query)
 
         if isinstance(response, dict):
             response = json.dumps(response, cls=self.json_encoder)
             headers = [('Content-Type', 'application/json')]
+        if isinstance(response, HTTPResponse):
+            headers = response.headers
+            body = str(response)
         else:
             headers = [PLAIN_TEXT]
+            body = response.encode('utf-8')
 
-        headers.append(('Content-Length', str(len(response))))
+        headers.append(('Content-Length', str(len(body))))
         start_response('200 OK', headers)
-        return [response.encode('utf-8')]
+        return [body]
 
     def add_route(self, path, callable, method='GET'):
         self.resolver.add_route(path, callable, method)
