@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import email, hashlib, http.cookies, io, mimetypes, json, re, os, time, urlli.parse, wsgiref
+import email, hashlib, http.cookies, io, mimetypes, json, re, os, time, urllib.parse, wsgiref
 
 from email.parser import HeaderParser
 
@@ -825,13 +825,14 @@ class HTTPResponse:
     """
     A response object, to make responding to requests easier.
     """
-    def __init__(self, body="", status_code=200, headers=None, content_type=PLAIN_TEXT):
+    def __init__(self, body="", status_code=200, status_line="OK", headers=None, content_type=PLAIN_TEXT):
         self.body = body
         self.status_code = int(status_code)
+        self.status_line = status_line
         self.headers = headers or {}
         self.content_type = content_type
         self._cookies = http.cookies.SimpleCookie()
-        self.set_header("Content-Type", self.content_type)
+        self.set_header(*self.content_type)
 
     def __str__(self):
         return "<HTTPResponse: {}>".format(self.status_code)
@@ -839,10 +840,6 @@ class HTTPResponse:
     def set_header(self, name, value):
         """
         Sets a header on the response.
-
-        If the `Content-Type` header is provided, this also updates the
-        value of `HTTPResponse.content_type`.
-
         Args:
             name (str): The name of the header.
             value (Any): The value of the header.
@@ -956,13 +953,12 @@ def static_file(request, filename, root, mimetype=True, download=False, charset=
     filename = os.path.abspath(os.path.join(root, filename.strip('/\\')))
     headers = headers.copy() if headers else {}
     getenv = request._environ.get
-
     if not os.path.exists(filename) or not os.path.isfile(filename):
-        return HTTResponse("File does not exist.", 404)
+        return HTTPResponse("File does not exist.", 404, "File not found")
     if not os.access(filename, os.R_OK) or not filename.startswith(root):
-        return HTTPError("Permission denied", 403)
+        return HTTPError("Permission denied", 403, "Permission denied")
 
-    if mimetype is True:
+    if mimetype:
         name = download if isinstance(download, str) else filename
         mimetype, encoding = mimetypes.guess_type(name)
         if encoding == 'gzip':
@@ -997,14 +993,12 @@ def static_file(request, filename, root, mimetype=True, download=False, charset=
         if check and check == etag:
             return HTTPResponse(status=304, **headers)
 
-    ims = getenv('HTTP_IF_MODIFIED_SINCE')
-    if ims:
-        ims = parse_date(ims.split(";")[0].strip())
-        if ims is not None and ims >= int(stats.st_mtime):
+    if (ims := getenv('HTTP_IF_MODIFIED_SINCE')):
+        if (parsed_ims := parse_date(ims.split(";")[0].strip())) is not None and parsed_ims >= int(stats.st_mtime):
             return HTTPResponse(status=304, **headers)
 
     body = '' if request.method == 'HEAD' else open(filename, 'rb')
-    return HTTPResponse(body.read(), 200, headers=headers, content_type=mimetype)
+    return HTTPResponse(body.read(), 200, headers=headers, content_type=('Content-Type', mimetype))
 
 class PyPette:
     """
@@ -1015,46 +1009,43 @@ class PyPette:
         self.json_encoder = json_encoder
         self.templates = TemplateEngine(TemplateLoader(template_path))
 
-    def _process_request(self, env: dict) -> HTTPRequest:
-        try:
-            handler, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
-
-        except (NoPathFoundError, NoHandlerError):
-            start_response(NOT_FOUND, [PLAIN_TEXT])
-            return [NOT_FOUND.encode('utf-8')]
-
-        except MethodMisMatchError:
-            start_response(NOT_ALLOWD,
-                           [PLAIN_TEXT])
-            return [NOT_ALLOWD.encode('utf-8')]
-
+    def _process_request(self, env: dict, start_response) -> HTTPRequest:
+        handler, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
         return handler, args, query, HTTPRequest.from_wsgi(env)
 
     def __call__(self, env, start_response):
-        handler, args, query, request = self._process_request(env)
-        response = handler(request, *args, **query)
+        body, headers, status = '', [], '200 OK'
+        try:
+            handler, args, query, request = self._process_request(env, start_response)
+            response = handler(request, *args, **query)
+            if isinstance(response, dict):
+                response = json.dumps(response, cls=self.json_encoder)
+                headers = [('Content-Type', 'application/json')]
+            if isinstance(response, HTTPResponse):
+                headers = [(k, v) for k, v in response.headers.items()]
+                possible_cookies = response._cookies.output()
+                if possible_cookies:
+                    for line in possible_cookies.splitlines():
+                        headers.append(tuple(line.split(": ", 1)))
 
-        if isinstance(response, dict):
-            response = json.dumps(response, cls=self.json_encoder)
-            headers = [('Content-Type', 'application/json')]
-        if isinstance(response, HTTPResponse):
-            headers = [(k, v) for k, v in response.headers.items()]
-            possible_cookies = response._cookies.output()
-            if possible_cookies:
-                for line in possible_cookies.splitlines():
-                    headers.append(tuple(line.split(": ", 1)))
-            
-            if hasattr(response.body, 'encode'):
-                body = [response.body.encode("utf-8")]
+                if hasattr(response.body, 'encode'):
+                    body = response.body.encode()
+                else:
+                    body = response.body
+                status = f"{response.status_code} {response.status_line}"
             else:
-                body =  response.body
-        else:
-            headers = [PLAIN_TEXT]
-            body = response.encode('utf-8')
-
-        headers.append(('Content-Length', str(len(body))))
-        start_response('200 OK', headers)
-        return [body]
+                headers = [('Content-Type', 'text/html')]
+                body = response.encode()
+        except (NoPathFoundError, NoHandlerError):
+            status, headers = NOT_FOUND, [PLAIN_TEXT]
+            body = NOT_FOUND.encode('utf-8')
+        except MethodMisMatchError:
+            start_response(NOT_ALLOWD, [PLAIN_TEXT])
+            body = NOT_ALLOWD.encode('utf-8')
+        finally:
+            headers.append(('Content-Length', str(len(body))))
+            start_response(status, headers)
+            return [body]
 
     def add_route(self, path, callable, method='GET'):
         self.resolver.add_route(path, callable, method)

@@ -42,7 +42,8 @@ def upload(request):
 
 @app.route("/static/:filename", method='GET')
 def static(request, filename):
-    return static_file(request, filename, 'views/static')
+    rv = static_file(request, filename, 'views/static')
+    return rv
 
 app.add_route("/", hello)
 
