@@ -800,6 +800,70 @@ class Router:
 
         return current_node.callback, path_params, query_params
 
+    def mount(self, prefix, other_router):
+        """
+        Mount another router's routes under a specified prefix.
+        If prefix is empty or None, merges at root level.
+
+        Args:
+            prefix (str): The prefix under which to mount the other router's routes
+            other_router (Router): The router instance to mount
+        """
+        def merge_node(current_node, other_node, current_path):
+            # Copy the callback and method if this is a terminal node
+            if other_node.callback:
+                current_node.callback = other_node.callback
+                current_node.method = other_node.method
+
+            # Merge all children
+            for key, child in other_node.children.items():
+                if key not in current_node.children:
+                    # Create new node with updated path
+                    new_path = f"{current_path}/{key}" if current_path else f"/{key}"
+                    current_node.children[key] = TrieNode(
+                        path=new_path,
+                        method=child.method
+                    )
+                    if key == ":":
+                        current_node.children[key].is_dynamic = True
+
+                # Recursively merge the child nodes
+                merge_node(
+                    current_node.children[key],
+                    child,
+                    current_node.children[key].rule
+                )
+
+        if not prefix:
+            merge_node(self.root, other_router.root, "")
+            return
+
+        prefix_parts = self._split_path(prefix)
+
+        # Start from root and create/traverse the prefix path
+        current_node = self.root
+        current_path = ""
+
+        # Create nodes for the prefix path
+        for part in prefix_parts:
+            if part not in current_node.children:
+                child_path = f"{current_path}/{part}" if current_path else f"/{part}"
+                current_node.children[part] = TrieNode(path=child_path)
+            current_node = current_node.children[part]
+            current_path = current_node.rule
+
+        merge_node(current_node, other_router.root, current_path)
+
+    def merge(self, other_router):
+        """
+        Merge another router's routes into this router at the root level.
+        Any conflicting routes will be overwritten by the other router's routes.
+
+        Args:
+            other_router (Router): The router instance to merge
+        """
+        self.mount("", other_router)
+
     def print_trie(self, node=None, depth=0):
         """Recursively print the Trie structure."""
         if node is None:
