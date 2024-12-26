@@ -1,38 +1,20 @@
 from __future__ import annotations
 
-import email
-import hashlib
-import http.cookies
-import io
-import mimetypes
-import json
-import re
-import os
-import time
-import wsgiref
+import email, hashlib, http.cookies, io, mimetypes, json, re, os, time, urlli.parse, wsgiref
 
 from email.parser import HeaderParser
-import urllib.parse
-
-from typing import (Any, Callable, cast)
 
 NOT_FOUND = '404 Not Found'
 NOT_ALLOWD = '405 Method Not Allowed'
 PLAIN_TEXT = ('Content-Type', 'text/plain')
 
 class TempliteSyntaxError(ValueError):
-    """Raised when a template has a syntax error."""
     pass
-
 
 class TempliteValueError(ValueError):
-    """Raised when an expression won't evaluate in a template."""
     pass
 
-
 class CodeBuilder:
-    """Build source code conveniently."""
-
     def __init__(self, indent: int = 0) -> None:
         self.code: list[str | CodeBuilder] = []
         self.indent_level = indent
@@ -41,28 +23,21 @@ class CodeBuilder:
         return "".join(str(c) for c in self.code)
 
     def add_line(self, line: str) -> None:
-        """Add a line of source to the code."""
         self.code.extend([" " * self.indent_level, line, "\n"])
 
     def add_section(self) -> CodeBuilder:
-        """Add a section, a sub-CodeBuilder."""
         section = CodeBuilder(self.indent_level)
         self.code.append(section)
         return section
 
-    INDENT_STEP = 4
-
     def indent(self) -> None:
-        """Increase the current indent for following lines."""
-        self.indent_level += self.INDENT_STEP
+        self.indent_level += 4
 
     def dedent(self) -> None:
-        """Decrease the current indent for following lines."""
-        self.indent_level -= self.INDENT_STEP
+        self.indent_level -= 4
 
     def get_globals(self,
                     globals_dict: dict[str, Any] = None) -> dict[str, Any]:
-        """Execute the code, and return a dict of globals it defines."""
         # Ensure the indentation level is back to zero
         assert self.indent_level == 0
 
@@ -76,8 +51,6 @@ class CodeBuilder:
 
 
 class TemplateLoader:
-    """A class to load templates from a given directory."""
-
     def __init__(self, base_path: str):
         """Initialize the loader with a base path for templates."""
         if not os.path.isdir(base_path):
@@ -90,15 +63,11 @@ class TemplateLoader:
         if not os.path.isfile(template_path):
             raise FileNotFoundError(
                     f"Template {template_name} not found in {self.base_path}.")
-
         with open(template_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-
 class Templite:
-    """A simple template renderer,
-       now integrated with TemplateLoader for {% include %}."""
-
+    """A simple template renderer, now integrated with TemplateLoader for {% include %}."""
     def __init__(self,
                  text: str,
                  loader: TemplateLoader | None = None,
@@ -165,8 +134,7 @@ class Templite:
                             self._syntax_error(
                                 "TemplateLoader required for include",
                                 token)
-                        # Add a placeholder for dynamic inclusion at
-                        # render time
+                        # Add a placeholder for dynamic inclusion at render time
                         code.add_line(
                             f"append_result(Templite(loader.get({repr(include_name)}), loader).render(context))"  # noqa
                         )
@@ -212,10 +180,7 @@ class Templite:
         code.dedent()
 
         # Add Templite to the globals for render_function
-        self._render_function = cast(
-            Callable[[dict[str, Any], Callable[..., Any]], str],
-            code.get_globals({"Templite": Templite, "loader": loader})["render_function"]  # noqa
-        )
+        self._render_function = code.get_globals({"Templite": Templite, "loader": loader})["render_function"]  # noqa
 
     def _expr_code(self, expr: str) -> str:
         """Generate Python code for an expression."""
@@ -274,7 +239,7 @@ class TemplateEngine:
         return Templite(self.loader.get(template), self.loader)
 
 
-class QueryDict(object):
+class QueryDict:
     """
     Simulates a dict-like object for query parameters.
 
@@ -287,7 +252,6 @@ class QueryDict(object):
     If you need all the values, `QueryDict.getlist` & `QueryDict.setlist`
     are available to expose the full list.
     """
-
     def __init__(self, data=None):
         self._data = data
 
@@ -766,7 +730,7 @@ class TrieNode:
             f"is_dynamic={self.is_dynamic})"
         )
 
-class MethodMisMatchError(ValueError):  
+class MethodMisMatchError(ValueError):
     pass
 
 class NoHandlerError(ValueError):
@@ -857,27 +821,11 @@ class Router:
         return dict(urllib.parse.parse_qsl(query_string))
 
 
-
 class HTTPResponse:
     """
     A response object, to make responding to requests easier.
-
-    A lightly-internal `start_response` attribute must be manually set on the
-    response object when in a WSGI environment in order to send the response.
-
-    Args:
-        body (str, Optional): The body of the response. Defaults to "".
-        status_code (int, Optional): The HTTP status code (without the
-            reason). Default is `200`.
-        headers (dict, Optional): The headers to supply with the response.
-            Default is empty headers.
-        content_type (str, Optional): The content-type of the response.
-            Default is `text/plain`.
     """
-
-    def __init__(
-        self, body="", status_code=200, headers=None, content_type=PLAIN_TEXT,
-    ):
+    def __init__(self, body="", status_code=200, headers=None, content_type=PLAIN_TEXT):
         self.body = body
         self.status_code = int(status_code)
         self.headers = headers or {}
@@ -887,9 +835,6 @@ class HTTPResponse:
 
     def __str__(self):
         return "<HTTPResponse: {}>".format(self.status_code)
-
-    def __repr__(self):
-        return str(self)
 
     def set_header(self, name, value):
         """
@@ -902,10 +847,7 @@ class HTTPResponse:
             name (str): The name of the header.
             value (Any): The value of the header.
         """
-        self.headers[name] = value
-
-        if name.lower() == "content-type":
-            self.content_type = value
+        self.headers.update({name: value})
 
     def set_cookie(
         self,
@@ -966,7 +908,7 @@ class HTTPResponse:
         if domain is not None:
             morsel["domain"] = domain
 
-        if PY_VERSION[1] >= 8 and samesite is not None:
+        if samesite:
             # `samesite` is only supported in Python 3.8+.
             morsel["samesite"] = samesite
 
@@ -974,34 +916,12 @@ class HTTPResponse:
 
     def delete_cookie(self, key, path="/", domain=None):
         """
-        Removes a cookie.
-
-        Succeed regards if the cookie is already set or not.
-
-        Args:
-            key (str): The name of the cookie.
-            path (str, Optional): The path the cookie is valid for.
-                Default is `"/"`.
-            domain (str, Optional): The domain the cookie is valid for.
-                Default is `None` (only the domain that set it).
+        Removes a cookie by expiring it.
         """
-        self.set_cookie(
-            key,
-            value="",
-            # We set a Max-Age of `0` to expire the cookie immediately,
-            # thus "deleting" it.
-            max_age=0,
-            path=path,
-            domain=domain,
-        )
+        self.set_cookie(key, value="", max_age=0, path=path,domain=domain)
 
 
-def static_file(request, filename, root,
-                mimetype=True,
-                download=False,
-                charset='UTF-8',
-                etag=None,
-                headers=None):
+def static_file(request, filename, root, mimetype=True, download=False, charset='UTF-8', etag=None, headers=None):
     """ Open a file in a safe way and return an instance of `HTTPResponse`
         that can be sent back to the client.
 
@@ -1032,7 +952,6 @@ def static_file(request, filename, root,
         possible. ``HEAD`` and ``Range`` requests (used by download managers to
         check or continue partial downloads) are also handled automatically.
     """
-
     root = os.path.join(os.path.abspath(root), '')
     filename = os.path.abspath(os.path.join(root, filename.strip('/\\')))
     headers = headers.copy() if headers else {}
@@ -1040,7 +959,7 @@ def static_file(request, filename, root,
 
     if not os.path.exists(filename) or not os.path.isfile(filename):
         return HTTResponse("File does not exist.", 404)
-    if not os.access(filename, os.R_OK):
+    if not os.access(filename, os.R_OK) or not filename.startswith(root):
         return HTTPError("Permission denied", 403)
 
     if mimetype is True:
@@ -1054,14 +973,12 @@ def static_file(request, filename, root,
     if charset and mimetype and 'charset=' not in mimetype \
         and (mimetype[:5] == 'text/' or mimetype == 'application/javascript'):
         mimetype += '; charset=%s' % charset
-    import pdb; pdb.set_trace()
+
     if mimetype:
         headers['Content-Type'] = mimetype
 
-    if download is True:
-        download = os.path.basename(filename)
-
     if download:
+        download = os.path.basename(filename)
         download = download.replace('"','')
         headers['Content-Disposition'] = 'attachment; filename="%s"' % download
 
@@ -1074,8 +991,7 @@ def static_file(request, filename, root,
         etag = '%d:%d:%d:%s:%s' % (stats.st_dev, stats.st_ino, stats.st_mtime,
                                    clen, filename)
         etag = hashlib.sha1(etag.encode()).hexdigest()
-
-    if etag:
+    else:
         headers['ETag'] = etag
         check = getenv('HTTP_IF_NONE_MATCH')
         if check and check == etag:
@@ -1088,15 +1004,12 @@ def static_file(request, filename, root,
             return HTTPResponse(status=304, **headers)
 
     body = '' if request.method == 'HEAD' else open(filename, 'rb')
-
     return HTTPResponse(body.read(), 200, headers=headers, content_type=mimetype)
-
 
 class PyPette:
     """
-    A pico WSGI Application framework with API inspired by Bottle.
+    A pico WSGI Application framework with an API inspired by Bottle.
     """
-
     def __init__(self, json_encoder=None, template_path="views"):
         self.resolver = Router()
         self.json_encoder = json_encoder
@@ -1119,7 +1032,6 @@ class PyPette:
 
     def __call__(self, env, start_response):
         handler, args, query, request = self._process_request(env)
-        
         response = handler(request, *args, **query)
 
         if isinstance(response, dict):
@@ -1128,8 +1040,6 @@ class PyPette:
         if isinstance(response, HTTPResponse):
             headers = [(k, v) for k, v in response.headers.items()]
             possible_cookies = response._cookies.output()
-
-            # Update the headers to include the cookies.
             if possible_cookies:
                 for line in possible_cookies.splitlines():
                     headers.append(tuple(line.split(": ", 1)))
