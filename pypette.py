@@ -1019,9 +1019,9 @@ class PyPette:
             handler, args, query, request = self._process_request(env, start_response)
             response = handler(request, *args, **query)
             if isinstance(response, dict):
-                response = json.dumps(response, cls=self.json_encoder)
+                body = json.dumps(response, cls=self.json_encoder).encode()
                 headers = [('Content-Type', 'application/json')]
-            if isinstance(response, HTTPResponse):
+            elif isinstance(response, HTTPResponse):
                 headers = [(k, v) for k, v in response.headers.items()]
                 possible_cookies = response._cookies.output()
                 if possible_cookies:
