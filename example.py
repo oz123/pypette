@@ -2,7 +2,7 @@ import json
 from wsgiref.simple_server import make_server
 from datetime import datetime, date
 
-from pypette import PyPette
+from pypette import PyPette, static_file
 
 class DateTimeISOEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -39,6 +39,10 @@ def upload(request):
     test = request.files['test.txt'] 
     content = test['content']
     return {"content": content.decode()}
+
+@app.route("/static/:filename", method='GET')
+def static(request, filename):
+    return static_file(request, filename, 'views/static')
 
 app.add_route("/", hello)
 

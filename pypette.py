@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import email
+import hashlib
 import http.cookies
 import io
+import mimetypes
 import json
 import re
 import os
+import time
 import wsgiref
 
 from email.parser import HeaderParser
@@ -12,6 +16,9 @@ import urllib.parse
 
 from typing import (Any, Callable, cast)
 
+NOT_FOUND = '404 Not Found'
+NOT_ALLOWD = '405 Method Not Allowed'
+PLAIN_TEXT = ('Content-Type', 'text/plain')
 
 class TempliteSyntaxError(ValueError):
     """Raised when a template has a syntax error."""
@@ -500,7 +507,8 @@ class HTTPRequest:
         content_length=0,
         request_protocol="HTTP/1.0",
         cookies=None,
-        files=None
+        files=None,
+        environ=None
     ):
         self.raw_uri = uri
         self.method = method.upper()
@@ -513,6 +521,7 @@ class HTTPRequest:
         self._cookies = cookies or http.cookies.SimpleCookie()
         self._body_stream = io.BytesIO(body.encode('utf-8') if isinstance(body, str) else body)
         self.COOKIES = {}
+        self._environ = environ
 
         # For caching.
         self._GET, self._POST, self._PUT = None, None, None
@@ -605,13 +614,6 @@ class HTTPRequest:
         non_http_prefixed_headers = [
             "CONTENT-TYPE",
             "CONTENT-LENGTH",
-            # TODO: Maybe in the future, add support for...?
-            # 'GATEWAY_INTERFACE',
-            # 'REMOTE_ADDR',
-            # 'REMOTE_HOST',
-            # 'SCRIPT_NAME',
-            # 'SERVER_NAME',
-            # 'SERVER_PORT',
         ]
 
         for key, value in environ.items():
@@ -647,6 +649,7 @@ class HTTPRequest:
             content_length=content_length,
             request_protocol=environ.get("SERVER_PROTOCOL", "HTTP/1.0"),
             cookies=cookies,
+            environ=environ
         )
 
     def content_type(self):
@@ -763,18 +766,14 @@ class TrieNode:
             f"is_dynamic={self.is_dynamic})"
         )
 
-
-class MethodMisMatchError(ValueError):
+class MethodMisMatchError(ValueError):  
     pass
-
 
 class NoHandlerError(ValueError):
-    pass
-
+    pass;
 
 class NoPathFoundError(ValueError):
     pass
-
 
 class Router:
     def __init__(self):
@@ -859,7 +858,7 @@ class Router:
 
 
 
-class HTTPResponse(object):
+class HTTPResponse:
     """
     A response object, to make responding to requests easier.
 
@@ -877,15 +876,13 @@ class HTTPResponse(object):
     """
 
     def __init__(
-        self, body="", status_code=200, headers=None, content_type=PLAIN,
+        self, body="", status_code=200, headers=None, content_type=PLAIN_TEXT,
     ):
         self.body = body
         self.status_code = int(status_code)
         self.headers = headers or {}
         self.content_type = content_type
         self._cookies = http.cookies.SimpleCookie()
-        self.start_response = None
-
         self.set_header("Content-Type", self.content_type)
 
     def __str__(self):
@@ -950,7 +947,6 @@ class HTTPResponse(object):
                 Default is `None`.
         """
         morsel = http.cookies.Morsel()
-        # TODO: In the future, signed cookies might be nice here.
         morsel.set(key, value, value)
 
         # Allow setting expiry w/ a `datetime`.
@@ -999,21 +995,101 @@ class HTTPResponse(object):
             domain=domain,
         )
 
-    def __str__(self):
-        headers = [(k, v) for k, v in self.headers.items()]
-        possible_cookies = self._cookies.output()
 
-        # Update the headers to include the cookies.
-        if possible_cookies:
-            for line in possible_cookies.splitlines():
-                headers.append(tuple(line.split(": ", 1)))
+def static_file(request, filename, root,
+                mimetype=True,
+                download=False,
+                charset='UTF-8',
+                etag=None,
+                headers=None):
+    """ Open a file in a safe way and return an instance of `HTTPResponse`
+        that can be sent back to the client.
 
-        self.start_response(status, headers)
-        return [self.body.encode("utf-8")]
+        :param filename: Name or path of the file to send, relative to ``root``.
+        :param root: Root path for file lookups. Should be an absolute directory
+            path.
+        :param mimetype: Provide the content-type header (default: guess from
+            file extension)
+        :param download: If True, ask the browser to open a `Save as...` dialog
+            instead of opening the file with the associated program. You can
+            specify a custom filename as a string. If not specified, the
+            original filename is used (default: False).
+        :param charset: The charset for files with a ``text/*`` mime-type.
+            (default: UTF-8)
+        :param etag: Provide a pre-computed ETag header. If set to ``False``,
+            ETag handling is disabled. (default: auto-generate ETag header)
+        :param headers: Additional headers dict to add to the response.
 
-NOT_FOUND = '404 Not Found'
-NOT_ALLOWD = '405 Method Not Allowed'
-PLAIN_TEXT = ('Content-Type', 'text/plain')
+        While checking user input is always a good idea, this function provides
+        additional protection against malicious ``filename`` parameters from
+        breaking out of the ``root`` directory and leaking sensitive information
+        to an attacker.
+
+        Read-protected files or files outside of the ``root`` directory are
+        answered with ``403 Access Denied``. Missing files result in a
+        ``404 Not Found`` response. Conditional requests (``If-Modified-Since``,
+        ``If-None-Match``) are answered with ``304 Not Modified`` whenever
+        possible. ``HEAD`` and ``Range`` requests (used by download managers to
+        check or continue partial downloads) are also handled automatically.
+    """
+
+    root = os.path.join(os.path.abspath(root), '')
+    filename = os.path.abspath(os.path.join(root, filename.strip('/\\')))
+    headers = headers.copy() if headers else {}
+    getenv = request._environ.get
+
+    if not os.path.exists(filename) or not os.path.isfile(filename):
+        return HTTResponse("File does not exist.", 404)
+    if not os.access(filename, os.R_OK):
+        return HTTPError("Permission denied", 403)
+
+    if mimetype is True:
+        name = download if isinstance(download, str) else filename
+        mimetype, encoding = mimetypes.guess_type(name)
+        if encoding == 'gzip':
+            mimetype = 'application/gzip'
+        elif encoding: # e.g. bzip2 -> application/x-bzip2
+            mimetype = 'application/x-' + encoding
+
+    if charset and mimetype and 'charset=' not in mimetype \
+        and (mimetype[:5] == 'text/' or mimetype == 'application/javascript'):
+        mimetype += '; charset=%s' % charset
+    import pdb; pdb.set_trace()
+    if mimetype:
+        headers['Content-Type'] = mimetype
+
+    if download is True:
+        download = os.path.basename(filename)
+
+    if download:
+        download = download.replace('"','')
+        headers['Content-Disposition'] = 'attachment; filename="%s"' % download
+
+    stats = os.stat(filename)
+    headers['Content-Length'] = clen = str(stats.st_size)
+    headers['Last-Modified'] = email.utils.formatdate(stats.st_mtime, usegmt=True)
+    headers['Date'] = email.utils.formatdate(time.time(), usegmt=True)
+
+    if etag is None:
+        etag = '%d:%d:%d:%s:%s' % (stats.st_dev, stats.st_ino, stats.st_mtime,
+                                   clen, filename)
+        etag = hashlib.sha1(etag.encode()).hexdigest()
+
+    if etag:
+        headers['ETag'] = etag
+        check = getenv('HTTP_IF_NONE_MATCH')
+        if check and check == etag:
+            return HTTPResponse(status=304, **headers)
+
+    ims = getenv('HTTP_IF_MODIFIED_SINCE')
+    if ims:
+        ims = parse_date(ims.split(";")[0].strip())
+        if ims is not None and ims >= int(stats.st_mtime):
+            return HTTPResponse(status=304, **headers)
+
+    body = '' if request.method == 'HEAD' else open(filename, 'rb')
+
+    return HTTPResponse(body.read(), 200, headers=headers, content_type=mimetype)
 
 
 class PyPette:
@@ -1028,7 +1104,7 @@ class PyPette:
 
     def _process_request(self, env: dict) -> HTTPRequest:
         try:
-            func, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
+            handler, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
 
         except (NoPathFoundError, NoHandlerError):
             start_response(NOT_FOUND, [PLAIN_TEXT])
@@ -1039,18 +1115,29 @@ class PyPette:
                            [PLAIN_TEXT])
             return [NOT_ALLOWD.encode('utf-8')]
 
-        return HTTPRequest.from_wsgi(env)
+        return handler, args, query, HTTPRequest.from_wsgi(env)
 
-    def __call__(self, environ, start_response):
-        request = self._process_request(env)
-        response = callback(request, *args, **query)
+    def __call__(self, env, start_response):
+        handler, args, query, request = self._process_request(env)
+        
+        response = handler(request, *args, **query)
 
         if isinstance(response, dict):
             response = json.dumps(response, cls=self.json_encoder)
             headers = [('Content-Type', 'application/json')]
         if isinstance(response, HTTPResponse):
-            headers = response.headers
-            body = str(response)
+            headers = [(k, v) for k, v in response.headers.items()]
+            possible_cookies = response._cookies.output()
+
+            # Update the headers to include the cookies.
+            if possible_cookies:
+                for line in possible_cookies.splitlines():
+                    headers.append(tuple(line.split(": ", 1)))
+            
+            if hasattr(response.body, 'encode'):
+                body = [response.body.encode("utf-8")]
+            else:
+                body =  response.body
         else:
             headers = [PLAIN_TEXT]
             body = response.encode('utf-8')
