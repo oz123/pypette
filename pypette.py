@@ -818,10 +818,15 @@ class Router:
             # Merge all children
             for key, child in other_node.children.items():
                 if key not in current_node.children:
-                    # Create new node with updated path
-                    new_path = f"{current_path}/{key}" if current_path else f"/{key}"
+                    # For dynamic routes, include the parameter name directly after ":"
+                    if key == ":":
+                        param_name = child.rule.split("/")[-1][1:]  # Remove the leading ":"
+                        display_path = f"{current_path}/:{param_name}"
+                    else:
+                        display_path = f"{current_path}/{key}" if current_path else f"/{key}"
+
                     current_node.children[key] = TrieNode(
-                        path=new_path,
+                        path=display_path,
                         method=child.method
                     )
                     if key == ":":
@@ -834,10 +839,12 @@ class Router:
                     current_node.children[key].rule
                 )
 
+        # If prefix is None or empty, start from root
         if not prefix:
             merge_node(self.root, other_router.root, "")
             return
 
+        # Clean and split the prefix
         prefix_parts = self._split_path(prefix)
 
         # Start from root and create/traverse the prefix path
@@ -852,7 +859,10 @@ class Router:
             current_node = current_node.children[part]
             current_path = current_node.rule
 
+        # Merge the other router's trie starting from this point
         merge_node(current_node, other_router.root, current_path)
+
+
 
     def merge(self, other_router):
         """
