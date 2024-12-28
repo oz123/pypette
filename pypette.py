@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import email, hashlib, http.cookies, io, mimetypes, json, re, os, time, urllib.parse, wsgiref
+import email, hashlib, http.cookies, http, io, mimetypes, json, re, os, time, traceback, urllib.parse, wsgiref
 
 from email.parser import HeaderParser
 
@@ -1078,7 +1078,7 @@ class PyPette:
         return handler, args, query, HTTPRequest.from_wsgi(env)
 
     def __call__(self, env, start_response):
-        body, headers, status = '', [], '200 OK'
+        body, headers, status, err = b'', [], '200 OK', None
         try:
             handler, args, query, request = self._process_request(env, start_response)
             response = handler(request, *args, **query)
@@ -1106,7 +1106,14 @@ class PyPette:
         except MethodMisMatchError:
             start_response(NOT_ALLOWD, [PLAIN_TEXT])
             body = NOT_ALLOWD.encode('utf-8')
+        except Exception as E:
+            err = E
+            traceback.print_exception(err)
         finally:
+            if err:
+                body = f"Something went wrong: {err.args}".encode()
+                status = f"{http.HTTPStatus.INTERNAL_SERVER_ERROR.value} {http.HTTPStatus.INTERNAL_SERVER_ERROR.description}"
+
             headers.append(('Content-Length', str(len(body))))
             start_response(status, headers)
             return [body]
@@ -1120,3 +1127,6 @@ class PyPette:
             return wrapped
 
         return decorator
+
+    def mount(self, prefix, app):
+        self.resolver.mount(prefix, app.resolver)

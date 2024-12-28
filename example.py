@@ -15,8 +15,9 @@ app = PyPette(json_encoder=DateTimeISOEncoder)
 def hello(request):
     return "hello world"
 
+@app.route("/hello/")
 @app.route("/hello/:name")
-def hello_name(request, name):
+def hello_name(request, name="world"):
     return f"hello {name}"
 
 @app.route("/api/")
@@ -47,7 +48,19 @@ def static(request, filename):
 
 app.add_route("/", hello)
 
+
+app2 = PyPette()
+
+@app2.route("/greeter")
+@app2.route("/greeter/:name")
+def greeter(request, name="world"):
+    return f"Hello {name}!"
+
+app.mount("/app2", app2)
+
 app.resolver.print_trie()
+
+
 httpd = make_server('', 8000, app)
 print("Serving on port 8000...")
 
