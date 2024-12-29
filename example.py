@@ -1,4 +1,5 @@
 import json
+import time
 from wsgiref.simple_server import make_server
 from datetime import datetime, date
 
@@ -11,6 +12,17 @@ class DateTimeISOEncoder(json.JSONEncoder):
         return super().default(obj)
 
 app = PyPette(json_encoder=DateTimeISOEncoder)
+
+def stopwatch(callback):
+    def wrapper(request, *args, **kwargs):
+        start = time.time()
+        result = callback(request, *args, **kwargs)
+        end = time.time()
+        print(f'X-Exec-Time {str(end - start)}')
+        return result
+    return wrapper
+
+app.install(stopwatch)
 
 def hello(request):
     return "hello world"

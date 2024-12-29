@@ -1074,14 +1074,43 @@ def static_file(request, filename, root, mimetype=True, download=False, charset=
     body = '' if request.method == 'HEAD' else open(filename, 'rb')
     return HTTPResponse(body.read(), 200, headers=headers, content_type=('Content-Type', mimetype))
 
+
+class Pipeline:
+    """
+    Pipeline supports both simple callables (like decorators) and objects with `setup` and `apply` methods.
+
+    Usage:
+    pipeline = Pipeline([plugin1, plugin2, callable_decorator, plugin3])
+    wrapped_function = pipeline(original)
+    result = wrapped_function(request, *args, **kwargs)
+    """
+    def __init__(self, plugins):
+        self.plugins = plugins
+        for plugin in self.plugins:
+            if hasattr(plugin, "setup") and callable(plugin.setup):
+                plugin.setup()  # Call setup if the plugin is an object with a setup method
+
+    def __call__(self, func):
+        # Apply all plugins (either callables or objects) to the function
+        for plugin in reversed(self.plugins):
+            if hasattr(plugin, "apply") and callable(plugin.apply):
+                func = plugin.apply(func)  # Use the plugin's apply method
+            elif callable(plugin):
+                func = plugin(func)  # Treat as a simple decorator
+            else:
+                raise TypeError(f"Invalid plugin: {plugin}. Must be callable or have an 'apply' method.")
+        return func
+
+
 class PyPette:
     """
     A pico WSGI Application framework with an API inspired by Bottle.
     """
-    def __init__(self, json_encoder=None, template_path="views"):
+    def __init__(self, json_encoder=None, template_path="views", plugins=None):
         self.resolver = Router()
         self.json_encoder = json_encoder
         self.templates = TemplateEngine(TemplateLoader(template_path))
+        self.plugin_manager = Pipeline(plugins or [])
 
     def _process_request(self, env: dict, start_response) -> HTTPRequest:
         handler, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
@@ -1129,14 +1158,26 @@ class PyPette:
             return [body]
 
     def add_route(self, path, callable, method='GET'):
-        self.resolver.add_route(path, callable, method)
+        wrapped=self.plugin_manager(callable)
+        self.resolver.add_route(path, wrapped, method)
 
     def route(self, path, method='GET'):
         def decorator(wrapped):
-            self.resolver.add_route(path, wrapped, method)
+            self.add_route(path, wrapped, method)
             return wrapped
 
         return decorator
 
     def mount(self, prefix, app):
         self.resolver.mount(prefix, app.resolver)
+
+    def install(self, plugin):
+        """Add a plugin to the list of plugins and prepare it for being
+           applied to all routes of this application. A plugin may be a simple
+           decorator or an object that implements the :class:`Plugin` API.
+        """
+        if hasattr(plugin, 'setup'): plugin.setup(self)
+        if not callable(plugin) and not hasattr(plugin, 'apply'):
+            raise TypeError("Plugins must be callable or implement .apply()")
+        self.plugin_manager.plugins.append(plugin)
+        return plugin
