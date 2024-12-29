@@ -60,7 +60,6 @@ app.mount("/app2", app2)
 
 app.resolver.print_trie()
 
-
 httpd = make_server('', 8000, app)
 print("Serving on port 8000...")
 
