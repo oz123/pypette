@@ -1119,8 +1119,10 @@ class PyPette:
     def __call__(self, env, start_response):
         body, headers, status, err = b'', [], '200 OK', None
         try:
+            self.before_request(env)
             handler, args, query, request = self._process_request(env, start_response)
             response = handler(request, *args, **query)
+            self.after_request(request, response)
             if isinstance(response, dict):
                 body = json.dumps(response, cls=self.json_encoder).encode()
                 headers = [('Content-Type', 'application/json')]
@@ -1145,10 +1147,15 @@ class PyPette:
         except MethodMisMatchError:
             start_response(NOT_ALLOWD, [PLAIN_TEXT])
             body = NOT_ALLOWD.encode('utf-8')
-        except Exception as E:
-            err = E
+        except Exception as err:
             traceback.print_exception(err)
         finally:
+            try:
+                self.after_request(env)
+            except Exception as err:
+                msg = "Error encoutered in after_request: {traceback.print_exception(err)})"
+                body += msg.encode()
+                print(msg)
             if err:
                 body = f"Something went wrong: {err.args}".encode()
                 status = f"{http.HTTPStatus.INTERNAL_SERVER_ERROR.value} {http.HTTPStatus.INTERNAL_SERVER_ERROR.description}"
@@ -1181,3 +1188,14 @@ class PyPette:
             raise TypeError("Plugins must be callable or implement .apply()")
         self.plugin_manager.plugins.append(plugin)
         return plugin
+
+    def before_request(self, env):
+        """This method is for the user to override.
+        Executed once before each request. The request context is available,
+        but no routing has happened yet."""
+        pass
+
+    def after_request(self, env):
+        """This method is for the user to override.
+        Executed once after each request regardless of its outcome."""
+        pass
