@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import email, hashlib, http.cookies, http, io, mimetypes, json, re, os, time, traceback, urllib.parse, wsgiref
+import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pickle, re, os, time, traceback, urllib.parse, wsgiref
 
 from email.parser import HeaderParser
 
@@ -521,6 +521,17 @@ class HTTPRequest:
         if len(domain_bits) > 1 and domain_bits[1]:
             self.port = int(domain_bits[1])
 
+    def get_cookie(self, key, default=none, secret=none):
+        """ return the content of a cookie. to read a `signed cookie`, the
+            `secret` must match the one used to create the cookie (see
+            :meth:`baseresponse.set_cookie`). if anything goes wrong (missing
+            cookie or wrong signature), return a default value. """
+        value = self.COOKIES.get(key)
+        if secret and value:
+            dec = cookie_decode(value, secret) # (key, value) tuple or none
+            return dec[1] if dec and dec[0] == key else default
+        return value or default
+
     def __str__(self):
         return "<HttpRequest: {} {}>".format(self.method, self.raw_uri)
 
@@ -894,6 +905,31 @@ class Router:
         """Parse a query string into a dictionary of key-value pairs."""
         return dict(urllib.parse.parse_qsl(query_string))
 
+def _lscmp(a, b):
+    '''Compares two strings in a cryptographically safe way. Runtime is not affected by length of common prefix.'''
+    return not sum(0 if x==y else 1 for x, y in zip(a, b)) and len(a) == len(b)
+
+def _cookie_is_encoded(data):
+    """ Return True if the argument looks like a encoded cookie."""
+    return data.startswith(b'!') and b'?' in data
+
+def _cookie_encode(name, value, secret, digestmod=None):
+    """ Encode and sign a pickle-able object. Return a (byte) string """
+    digestmod = digestmod or hashlib.sha256
+    msg = base64.b64encode(pickle.dumps([name, value], -1))
+    sig = base64.b64encode(hmac.new(secret.encode(), msg, digestmod=digestmod).digest())
+    return b'!' + sig + b'?' + msg
+
+def _cookie_decode(data, secret, digestmod=None):
+    """ Verify and decode an encoded string. Return an object or None."""
+    data = data.encode()
+    if _cookie_is_encoded(data):
+        sig, msg = data.split(b'?', 1)
+        digestmod = digestmod or hashlib.sha256
+        hashed = hmac.new(secret.encode(), msg, digestmod=digestmod).digest()
+        if _lscmp(sig[1:], base64.b64encode(hashed)):
+            dst = pickle.loads(base64.b64decode(msg))
+            return dst
 
 class HTTPResponse:
     """
@@ -931,6 +967,7 @@ class HTTPResponse:
         secure=False,
         httponly=False,
         samesite=None,
+        secert=None
     ):
         """
         Sets a cookie on the response.
@@ -960,7 +997,11 @@ class HTTPResponse:
                 Default is `None`.
         """
         morsel = http.cookies.Morsel()
-        morsel.set(key, value, value)
+        if secret:
+            encoded_value = _cookie_encode(key, value, secret)
+            morsel.set(key, value, encoded_value)
+        else:
+            morsel.set(key, value, value)
 
         # Allow setting expiry w/ a `datetime`.
         if hasattr(expires, "strftime"):
