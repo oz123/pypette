@@ -1,3 +1,10 @@
+"""
+PyPette is a tiny WSGI framework for building applications in all sizes.
+It aims to be simple to understand and to extend.
+
+Copyright (c) 2024-2025, Oz Tiram.
+License: MIT (see LICENSE for details)
+"""
 from __future__ import annotations
 
 import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pickle, re, os, time, traceback, urllib.parse, wsgiref
