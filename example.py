@@ -58,6 +58,11 @@ def static(request, filename):
     rv = static_file(request, filename, 'views/static')
     return rv
 
+@app.route("/trigger", method="GET")
+def trigger_error(request):
+    """we really should not do this..."""
+    1/0
+
 app.add_route("/", hello)
 
 

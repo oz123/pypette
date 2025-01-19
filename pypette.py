@@ -4,9 +4,8 @@ import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pi
 
 from email.parser import HeaderParser
 
-NOT_FOUND = '404 Not Found'
-NOT_ALLOWD = '405 Method Not Allowed'
 PLAIN_TEXT = ('Content-Type', 'text/plain')
+
 
 class TempliteSyntaxError(ValueError):
     pass
@@ -521,7 +520,7 @@ class HTTPRequest:
         if len(domain_bits) > 1 and domain_bits[1]:
             self.port = int(domain_bits[1])
 
-    def get_cookie(self, key, default=none, secret=none):
+    def get_cookie(self, key, default=None, secret=None):
         """ return the content of a cookie. to read a `signed cookie`, the
             `secret` must match the one used to create the cookie (see
             :meth:`baseresponse.set_cookie`). if anything goes wrong (missing
@@ -1142,6 +1141,14 @@ class Pipeline:
                 raise TypeError(f"Invalid plugin: {plugin}. Must be callable or have an 'apply' method.")
         return func
 
+def httpstatus_as_str(status):
+    """
+    >>> httpstatus_as_str("NOT_FOUND")
+    '404 Not Found'
+    """
+    return " ".join([str(getattr(getattr(http.HTTPStatus, status), x))
+                     for x in ["value", "phrase"]])
+
 
 class PyPette:
     """
@@ -1183,13 +1190,11 @@ class PyPette:
                 headers = [('Content-Type', 'text/html')]
                 body = response.encode()
         except (NoPathFoundError, NoHandlerError):
-            status, headers = NOT_FOUND, [PLAIN_TEXT]
-            body = NOT_FOUND.encode('utf-8')
+            status, headers, body = self.handle_404()
         except MethodMisMatchError:
-            start_response(NOT_ALLOWD, [PLAIN_TEXT])
-            body = NOT_ALLOWD.encode('utf-8')
+            status, headers, body = self.handle_405()
         except Exception as err:
-            traceback.print_exception(err)
+            status, headers, body = self.handle_exception(err)
         finally:
             try:
                 self.after_request(env)
@@ -1197,12 +1202,13 @@ class PyPette:
                 msg = "Error encoutered in after_request: {traceback.print_exception(err)})"
                 body += msg.encode()
                 print(msg)
-            if err:
-                body = f"Something went wrong: {err.args}".encode()
-                status = f"{http.HTTPStatus.INTERNAL_SERVER_ERROR.value} {http.HTTPStatus.INTERNAL_SERVER_ERROR.description}"
+
+                status, headers, body = self.handle_exception(err)
 
             headers.append(('Content-Length', str(len(body))))
             start_response(status, headers)
+            if isinstance(body, str):
+                body = body.encode('utf-8')
             return [body]
 
     def add_route(self, path, callable, method='GET'):
@@ -1240,3 +1246,29 @@ class PyPette:
         """This method is for the user to override.
         Executed once after each request regardless of its outcome."""
         pass
+
+    def handle_404(self):
+        """Override this to show a more sophisticated 404 page"""
+        status = httpstatus_as_str("NOT_FOUND")
+        headers = [PLAIN_TEXT]
+        body = status.encode('utf-8')
+        return status, headers, body
+
+    def handle_405(self):
+        """Override this to show a more sophisticated 405 page"""
+        status = httpstatus_as_str("METHOD_NOT_ALLOWED")
+        headers = [PLAIN_TEXT]
+        body = status.encode('utf-8')
+        return status, headers, body
+
+    def handle_exception(self, exception):
+        """Override this to show a more sophisticated error page"""
+        print("In handle_exception")
+        if os.getenv("PYPETTE_DEBUG"):
+            body = " ".join(traceback.format_exception(exception))
+        else:
+            body = "Something went awefully wrong"
+
+        status = httpstatus_as_str("INTERNAL_SERVER_ERROR")
+        headers = [PLAIN_TEXT]
+        return status, headers, body
