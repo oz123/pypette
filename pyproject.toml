@@ -7,7 +7,7 @@ max-line-length = 120
 
 [project]
 dynamic = ["version"]
-name = "pypette"
+name = "pypette-web"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
