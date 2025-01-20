@@ -38,25 +38,21 @@ def hello_json(request):
     return {"something": "you can json serialize ...",
             "today is": date.today(), "now": datetime.now()}
 
-@app.route('/fancy')
-def view_with_template(request):
-    return app.templates.load('base.html').render({
+def _get_vars():
+    return {
         "user_name": "Admin",
         "is_admin": True,
         "hobbies": ["Reading", "Cooking", "Cycling"],
         "current_year": 2024,
         "format_price": lambda x: x.upper(),
-        })
+        }
+@app.route('/fancy')
+def view_with_template(request):
+    return app.templates.load('base.html').render(_get_vars())
 
 @app.route('/fancy2')
 def view_with_template_2(request):
-    return template('base.html').render({
-        "user_name": "Admin",
-        "is_admin": True,
-        "hobbies": ["Reading", "Cooking", "Cycling"],
-        "current_year": 2024,
-        "format_price": lambda x: x.upper(),
-        })
+    return template('base.html').render(_get_vars())
 
 
 @app.route('/upload', method='POST')
