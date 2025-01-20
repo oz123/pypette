@@ -43,8 +43,8 @@ def _get_vars():
         "user_name": "Admin",
         "is_admin": True,
         "hobbies": ["Reading", "Cooking", "Cycling"],
-        "current_year": 2024,
-        "format_price": lambda x: x.upper(),
+        "current_year": date.today().year,
+        "upper": lambda x: x.upper(),
         }
 @app.route('/fancy')
 def view_with_template(request):
