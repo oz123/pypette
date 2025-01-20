@@ -1177,7 +1177,6 @@ class PyPette:
             self.before_request(env)
             handler, args, query, request = self._process_request(env, start_response)
             response = handler(request, *args, **query)
-            self.after_request(request, response)
             if isinstance(response, dict):
                 body = json.dumps(response, cls=self.json_encoder).encode()
                 headers = [('Content-Type', 'application/json')]
