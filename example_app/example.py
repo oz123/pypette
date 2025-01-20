@@ -12,6 +12,7 @@ class DateTimeISOEncoder(json.JSONEncoder):
         return super().default(obj)
 
 app = PyPette(json_encoder=DateTimeISOEncoder)
+template = lambda tname: app.templates.load(tname)
 
 def stopwatch(callback):
     def wrapper(request, *args, **kwargs):
@@ -46,6 +47,17 @@ def view_with_template(request):
         "current_year": 2024,
         "format_price": lambda x: x.upper(),
         })
+
+@app.route('/fancy2')
+def view_with_template_2(request):
+    return template('base.html').render({
+        "user_name": "Admin",
+        "is_admin": True,
+        "hobbies": ["Reading", "Cooking", "Cycling"],
+        "current_year": 2024,
+        "format_price": lambda x: x.upper(),
+        })
+
 
 @app.route('/upload', method='POST')
 def upload(request):
