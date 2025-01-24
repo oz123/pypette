@@ -1161,7 +1161,7 @@ class PyPette:
     """
     A pico WSGI Application framework with an API inspired by Bottle.
     """
-    def __init__(self, json_encoder=None, template_path="views", plugins=None):
+    def __init__(self, json_encoder=json.JSONEncoder, template_path="views", plugins=None):
         self.resolver = Router()
         self.json_encoder = json_encoder
         self.templates = TemplateEngine(TemplateLoader(template_path))
