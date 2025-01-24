@@ -1269,9 +1269,10 @@ class PyPette:
 
     def handle_exception(self, exception):
         """Override this to show a more sophisticated error page"""
-        print("In handle_exception")
+        exception = " ".join(traceback.format_exception(exception))
+        print(exception)
         if os.getenv("PYPETTE_DEBUG"):
-            body = " ".join(traceback.format_exception(exception))
+            body = exception
         else:
             body = "Something went awefully wrong"
 
