@@ -724,7 +724,6 @@ class HTTPRequest:
         """
         return self.content_type() == 'application/json'
         
-
 class TrieNode:
     def __init__(self, path="/", method="GET"):
         self.children = {}
@@ -785,9 +784,8 @@ class Router:
 
         current_node.callback = handler
 
-    def get(self, full_path, method="GET"):
-        """Find and call the appropriate handler for a full path with query
-        parameters."""
+    def match(self, full_path, method="GET"):
+        """Find and call the appropriate handler for a full path with query parameters."""
         # Split path and query parameters
         path, _, query_string = full_path.partition("?")
         query_params = self._parse_query_string(query_string)
@@ -808,16 +806,14 @@ class Router:
                 raise NoPathFoundError(f"No route matches path: {path}")
 
         if current_node.method != method:
-            raise MethodMisMatchError(
-                f"Method not allowed for path {path}. Expected {current_node.method}."  # noqa
-            )
+            raise MethodMisMatchError(f"Method not allowed for path {path}. Expected {current_node.method}.")
 
         if not current_node.callback:
             raise NoHandlerError(f"No handler found for path: {path}")
 
         return current_node.callback, path_params, query_params
 
-    def mount(self, prefix, other_router):
+    def mount(self, prefix: str, other_router: str):
         """
         Mount another router's routes under a specified prefix.
         If prefix is empty or None, merges at root level.
@@ -878,8 +874,6 @@ class Router:
 
         # Merge the other router's trie starting from this point
         merge_node(current_node, other_router.root, current_path)
-
-
 
     def merge(self, other_router):
         """
@@ -1168,7 +1162,7 @@ class PyPette:
         self.plugin_manager = Pipeline(plugins or [])
 
     def _process_request(self, env: dict, start_response) -> HTTPRequest:
-        handler, args, query = self.resolver.get(env['PATH_INFO'], env['REQUEST_METHOD'])
+        handler, args, query = self.resolver.match(env['PATH_INFO'], env['REQUEST_METHOD'])
         return handler, args, query, HTTPRequest.from_wsgi(env)
 
     def __call__(self, env, start_response):
