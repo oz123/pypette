@@ -2,5 +2,8 @@ _version.py
 dist/**
 *.sw[o,p]
 .venv/**
-__pycache__/**
+**__pycache__/**
+tests/**__pycache__**
 *.egg-info/**
+.coverage*
+coverage.json
