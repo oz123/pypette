@@ -1,4 +1,4 @@
-youPyPette - A drop of WSGI
+PyPette - A drop of WSGI
 ========================
 
 PyPette is a nano WSGI framework inspired by itty and bottle.py.
