@@ -1,4 +1,4 @@
-PyPette - A drop of WSGI
+youPyPette - A drop of WSGI
 ========================
 
 PyPette is a nano WSGI framework inspired by itty and bottle.py.
@@ -13,7 +13,6 @@ with it. It includes:
  * Automatic JSON responses.
  * Streaming file uploads.
  * Static file serving.
- * Atatic file serving.
  * Application mounting for building composable apps.
  * Familiar decorator `@app.route` syntax.
 
