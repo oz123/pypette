@@ -3,7 +3,7 @@ import time
 from wsgiref.simple_server import make_server
 from datetime import datetime, date
 
-from pypette import PyPette, static_file
+from pypette import PyPette, static_file, HTTPResponse
 
 class DateTimeISOEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -19,11 +19,37 @@ def stopwatch(callback):
         start = time.time()
         result = callback(request, *args, **kwargs)
         end = time.time()
+        print(request)
         print(f'X-Exec-Time {str(end - start)}')
         return result
     return wrapper
 
+
+class CORSPlugin:
+    """Plugin to handle Cross Origin Resource Sharing
+    Allows just one origin.
+    """
+    def __init__(self, origins: str, app: PyPette):
+        app.add_route("/", lambda x: x, method="OPTIONS")
+        self.origin = origin
+
+    def __call__(self, callback):
+        def wrapper(request, *args, **kwargs):
+            response = callback(request, *args, **kwargs)
+
+            if isinstance(response, str):
+               response = HTTPResponse(body=response)
+
+            response.headers['Access-Control-Allow-Origin'] = self.origin
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Origin, Accept, Content-Type, X-Requested-With, X-CSRF-Token'
+            return response
+
+        return wrapper
+
+cors = CORSPlugin(["*"], app)
 app.install(stopwatch)
+app.install(cors)
 
 def hello(request):
     return "hello world"
@@ -46,6 +72,7 @@ def _get_vars():
         "current_year": date.today().year,
         "upper": lambda x: x.upper(),
         }
+
 @app.route('/fancy')
 def view_with_template(request):
     return app.templates.load('base.html').render(_get_vars())
