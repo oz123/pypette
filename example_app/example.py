@@ -28,6 +28,8 @@ def stopwatch(callback):
 class CORSPlugin:
     """Plugin to handle Cross Origin Resource Sharing
     Allows just one origin.
+
+    For a more sophisticated plugin see the plugins directory
     """
     def __init__(self, origins: str, app: PyPette):
         app.add_route("/", lambda x: x, method="OPTIONS")
