@@ -31,7 +31,7 @@ class CORSPlugin:
 
     For a more sophisticated plugin see the plugins directory
     """
-    def __init__(self, origins: str, app: PyPette):
+    def __init__(self, origin: str, app: PyPette):
         app.add_route("/", lambda x: x, method="OPTIONS")
         self.origin = origin
 
@@ -49,7 +49,7 @@ class CORSPlugin:
 
         return wrapper
 
-cors = CORSPlugin(["*"], app)
+cors = CORSPlugin("*", app)
 app.install(stopwatch)
 app.install(cors)
 
