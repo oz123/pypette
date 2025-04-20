@@ -767,51 +767,62 @@ class Router:
 
         for part in parts:
             is_dynamic = part.startswith(":")
-            # Use ":" as a wildcard for dynamic parts
             key = ":" if is_dynamic else part
 
             if key not in current_node.children:
-                # Compute the path for the child node
-                child_path = f"{current_path}/{part}" if \
-                        current_path else f"/{part}"
-                current_node.children[key] = TrieNode(path=child_path,
-                                                      method=method)
+                child_path = f"{current_path}/{part}" if current_path else f"/{part}"
+                current_node.children[key] = TrieNode(path=child_path)
+
                 if is_dynamic:
                     current_node.children[key].is_dynamic = True
 
             current_node = current_node.children[key]
             current_path = current_node.rule
 
-        current_node.callback = handler
+        # Instead of overwriting, we add a new *method-specific* child if needed
+        method_key = f"__{method}__"
+        if method_key not in current_node.children:
+            current_node.children[method_key] = TrieNode(path=current_node.rule, method=method)
+        current_node.children[method_key].callback = handler
 
     def match(self, full_path, method="GET"):
         """Find and call the appropriate handler for a full path with query parameters."""
-        # Split path and query parameters
         path, _, query_string = full_path.partition("?")
         query_params = self._parse_query_string(query_string)
-        # Match the route and collect path parameters
         parts = self._split_path(path)
         current_node = self.root
         path_params = []
 
         for part in parts:
             if part in current_node.children:
-                # Match static parts
                 current_node = current_node.children[part]
             elif ":" in current_node.children:
-                # Match dynamic parts
                 current_node = current_node.children[":"]
                 path_params.append(part)
             else:
                 raise NoPathFoundError(f"No route matches path: {path}")
 
-        if current_node.method != method:
-            raise MethodMisMatchError(f"Method not allowed for path {path}. Expected {current_node.method}.")
+        method_key = f"__{method}__"
+        if method_key in current_node.children:
+            current_node = current_node.children[method_key]
+        else:
+            raise MethodMisMatchError(f"Method {method} not allowed for path {path}")
 
         if not current_node.callback:
             raise NoHandlerError(f"No handler found for path: {path}")
 
         return current_node.callback, path_params, query_params
+
+    def print_trie(self, node=None, depth=0):
+        if node is None:
+            node = self.root
+
+        indent = "  " * depth
+        handler_name = node.callback.__name__ if node.callback else None
+        print(f"{indent}{node.rule} (Method: {node.method}, Handler: {handler_name})")
+
+        for key, child in node.children.items():
+            self.print_trie(child, depth + 1)
 
     def mount(self, prefix: str, other_router: str):
         """
