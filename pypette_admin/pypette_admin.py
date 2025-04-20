@@ -6,18 +6,15 @@ ALLOWED_METHODS=["GET", "POST", "DELETE"]
 
 
 def generic_get(request):
-
-    return {"hello": "get"}
+    return admin.templates.load('table.html').render({"method":request.method})
 
 
 def generic_delete(request):
-
-    return {"hello": "delete"}
+    return admin.templates.load('table.html').render({"method":request.method})
 
 
 def generic_post(request):
-
-    return {"hello": "post"}
+    return admin.templates.load('table.html').render({"method":request.method})
 
 
 class AdminManager(PyPette):

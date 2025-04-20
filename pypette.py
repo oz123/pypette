@@ -723,7 +723,8 @@ class HTTPRequest:
             dict: The data
         """
         return self.content_type() == 'application/json'
-        
+
+
 class TrieNode:
     def __init__(self, path="/", method="GET"):
         self.children = {}
