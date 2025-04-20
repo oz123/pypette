@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<html>
+{% include head.html %}
+<body>
+  <h1>{{ title }}</h1>
+  {% for model in models %}
+    <a href="{{ model }}">{{model}}</a>
+  {% endfor %}
+</body>
+</html>
