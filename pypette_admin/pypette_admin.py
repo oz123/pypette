@@ -6,10 +6,16 @@ ALLOWED_METHODS=["GET", "POST", "DELETE"]
 
 
 def generic_get(request):
+
+    model_name = request.path.split("/")[-1]
+    model = REGISTERED_MODELS[model_name]
+
+    rows = list(model.select())
     return admin.templates.load('table.html').render({"method": request.method,
-                                                      "rows": [],
+                                                      "rows": rows,
                                                       "admin_prefix": admin.prefix,
-                                                      "title": request.path.split("/")[-1]})
+                                                      "title": model_name,
+                                                      "to_row": model_to_tr})
 
 
 def generic_delete(request):
@@ -20,9 +26,7 @@ def generic_post(request):
     return admin.templates.load('table.html').render({"method":request.method,
                                                       "title": "asdasd"
                                                      })
-
-
-REGISTERED_MODELS=[]
+REGISTERED_MODELS = {}
 
 
 def list_registered(request):
@@ -31,6 +35,13 @@ def list_registered(request):
                                                       "title": "Modles Admin",
                                                       "method": request.method,
                                                       "admin_prefix": admin.prefix})
+
+
+def model_to_tr(instance):
+    """Convert a Peewee model instance to an HTML <tr>...</tr> row."""
+    fields = instance._meta.fields
+    cells = [f"<td>{getattr(instance, field)}</td>" for field in fields]
+    return f"<tr>{''.join(cells)}</tr>"
 
 
 class AdminManager(PyPette):
@@ -47,7 +58,7 @@ class AdminManager(PyPette):
         if not allowed_methods:
             allowed_methods=ALLOWED_METHODS
 
-        REGISTERED_MODELS.append(model.__name__)
+        REGISTERED_MODELS[model.__name__.lower()] = model
 
         for method in allowed_methods:
             print(model.__name__.lower(), f"generic_{method.lower()}" ,method)

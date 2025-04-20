@@ -3,7 +3,10 @@
 {% include head.html %}
 <body>
   <h1>{{ title }}</h1>
+  <table>
   {% for row in rows %}
+	{{ row|to_row }}
   {% endfor %}
+  </table>
 </body>
 </html>

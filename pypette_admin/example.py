@@ -1,7 +1,23 @@
 from wsgiref.simple_server import make_server
 
+import peewee as pw
 from pypette import PyPette
 
+
+db = pw.SqliteDatabase(':memory:')
+
+
+class People(pw.Model):
+    name = pw.CharField()
+    birthday = pw.DateField()
+
+    class Meta:
+        database = db
+
+db.create_tables([People])
+
+People(name="Albert Einstein", birthday="1879-03-14").save()
+People(name="Richard Feynman", birthday="1918-05-11").save()
 
 myapp = PyPette()
 
@@ -12,10 +28,6 @@ def hello(request):
 
 
 from pypette_admin import admin
-
-
-class People:
-    ...
 
 admin.register_model(People)
 
