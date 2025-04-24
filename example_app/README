@@ -1,0 +1,10 @@
+
+building a compiled app:
+------------------------
+produces a binary that requires a python installation:
+
+nuitka --show-progress --jobs=20 --follow-imports --include-data-dir=views=views  example.py
+
+prodcues a binary that does not require  python installation (but still requires glibc etc.)
+nuitka --show-progress --jobs=20 --follow-imports --standalone  --include-data-dir=views=views  example.py
+
