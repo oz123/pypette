@@ -1,3 +1,6 @@
+from datetime import date, datetime
+import datetime
+import json
 from wsgiref.simple_server import make_server
 
 import peewee as pw
@@ -19,7 +22,15 @@ db.create_tables([People])
 People(name="Albert Einstein", birthday="1879-03-14").save()
 People(name="Richard Feynman", birthday="1918-05-11").save()
 
-myapp = PyPette()
+
+class DateTimeISOEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime.datetime, datetime.date)):
+            return obj.isoformat()
+        return super().default(obj)
+
+
+myapp = PyPette(json_encoder=DateTimeISOEncoder)
 
 
 @myapp.route("/hello")
@@ -27,11 +38,15 @@ def hello(request):
     return "hello"
 
 
-from pypette_admin import admin
+from pypette_admin import admin, RestManager
 
+api = RestManager()
+
+api.register_model(People)
 admin.register_model(People)
 
-myapp.mount("/admin", admin)
+#myapp.mount("/admin", admin)
+myapp.mount("/v1/", api)
 
 httpd = make_server('', 8000, myapp)
 print("Serving on port 8000...")

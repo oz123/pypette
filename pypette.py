@@ -830,6 +830,10 @@ class Router:
         Mount another router's routes under a specified prefix.
         If prefix is empty or None, merges at root level.
 
+        Mounting an app to another app means you only get to use
+        the routes. So plugins and middleware must be installed
+        at root app.
+
         Args:
             prefix (str): The prefix under which to mount the other router's routes
             other_router (Router): The router instance to mount
@@ -1183,7 +1187,7 @@ class PyPette:
             self.before_request(env)
             handler, args, query, request = self._process_request(env, start_response)
             response = handler(request, *args, **query)
-            if isinstance(response, dict):
+            if isinstance(response, (dict, list)):
                 body = json.dumps(response, cls=self.json_encoder).encode()
                 headers = [('Content-Type', 'application/json')]
             elif isinstance(response, HTTPResponse):
