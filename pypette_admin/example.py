@@ -40,8 +40,7 @@ def hello(request):
 
 from pypette_admin import admin, RestManager
 
-api = RestManager()
-
+api = RestManager(myapp)
 api.register_model(People)
 admin.register_model(People)
 
