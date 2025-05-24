@@ -2,6 +2,7 @@ import json
 import sys
 
 import peewee
+import peewee as pw
 import pypette
 from pypette import PyPette, HTTPResponse
 from playhouse.shortcuts import model_to_dict
@@ -50,6 +51,7 @@ def rest_get(request: pypette.HTTPRequest):
         response.append(model_to_dict(row))
 
     return response
+
 
 def rest_post(request: pypette.HTTPRequest):
     model_name = request.path.split("/")[-1]
@@ -120,7 +122,10 @@ class RestManager(PyPette):
         super().__init__(**kwargs)
         self.prefix = prefix
         self.registered_models = {}
-        self.swagger_meta = {"openapi": "3.1.0", "info": {"title": title, "description": description, "version": version}}
+        self.title = title
+        self.description = description
+        self.version =  version
+        self.swagger_meta = {"title": title, "description": description, "version": version}
         self._configure(app)
 
     def register_model(self, model, allowed_methods=None):
@@ -131,83 +136,87 @@ class RestManager(PyPette):
         self.registered_models[model.__name__.lower()] = model
 
         for method in allowed_methods:
-            print(model.__name__.lower(), f"generic_{method.lower()}" ,method)
+            print(model.__name__.lower(), f"generic_{method.lower()}", method)
             self.add_route(model.__name__.lower(),
                            getattr(sys.modules[__name__], f"rest_{method.lower()}"),
                            method=method)
 
-    def gen_swagger(self, request):
+    def _model_get(self, model):
         return {
-    "openapi": "3.1.0",
-    "info": {
-        "title": "People API",
-        "description": "API for managing people records",
-        "version": "1.0.0"
-    },
-    "paths": {
-        "/people": {
-            "get": {
-                "summary": "Retrieve all people",
-                "description": "Returns a list of all people in the database.",
-                "responses": {
+            "summary": f"Retrieve all {model.__name__}",
+            "description": f"Returns a list of all {model.__name__} in the database.",
+            "responses": {
                     "200": {
                         "description": "A list of people",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "name": {
-                                                "type": "string"
-                                            },
-                                            "birthday": {
-                                                "type": "string",
-                                                "format": "date"
-                                            }
-                                        }
-                                    }
+                                    "items": self.generate_openapi_schema(model)
                                 }
                             }
                         }
                     }
                 }
-            },
-            "post": {
-                "summary": "Add a new person",
-                "description": "Adds a new person to the database.",
+            }
+
+    def _model_post(self, model):
+        return {
+                "summary": f"Add a new {model.__name__} item",
+                "description": f"Adds a new {model.__name__} to the database.",
                 "requestBody": {
                     "required": True,
                     "content": {
                         "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "properties": {
-                                    "name": {
-                                        "type": "string"
-                                    },
-                                    "birthday": {
-                                        "type": "string",
-                                        "format": "date"
-                                    }
-                                }
-                            }
+                            "schema": self.generate_openapi_schema(model)
                         }
                     }
                 },
                 "responses": {
                     "201": {
-                        "description": "Person created successfully"
+                        "description": "Object created successfully"
                     },
                     "400": {
                         "description": "Invalid input"
                     }
                 }
             }
+
+    def _get_models_paths(self):
+        mps = {}
+        for name, model in self.registered_models.items():
+           mps[f"/{name}"] = {
+               "get": self._model_get(model),
+               "post": self._model_post(model),
+           }
+        return mps
+
+    def map_field_to_openapi(self, field):
+        if isinstance(field, pw.CharField):
+            return {"type": "string"}
+        elif isinstance(field, pw.DateField):
+            return {"type": "string", "format": "date"}
+        ...
+        # add more mappings as needed
+        return {"type": "string"}
+
+    def generate_openapi_schema(self, model):
+        """generate OpenAPI schema from a Peewee model"""
+        properties = {}
+        for field in model._meta.fields.values():
+            properties[field.name] = self.map_field_to_openapi(field)
+        return {
+            "type": "object",
+            "properties": properties
         }
-    }
-}
+
+    def gen_swagger(self, request):
+        return {
+            "openapi": "3.1.0",
+            "info": self.swagger_meta,
+            "paths": self._get_models_paths()
+        }
+
     def gen_docs(self, request):
         return f"""
         <!DOCTYPE html>
