@@ -9,9 +9,22 @@ from __future__ import annotations
 
 import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pickle, re, os, time, traceback, urllib.parse, wsgiref
 from urllib.parse import urljoin
+from email.utils import parsedate_to_datetime
 from email.parser import HeaderParser
+from typing import Optional
 
 PLAIN_TEXT = ('Content-Type', 'text/plain')
+
+
+def parse_date(date_str: str) -> Optional[int]:
+    try:
+        dt = parsedate_to_datetime(date_str)
+        if dt.tzinfo is None:
+            # Assume UTC if no timezone is provided
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return int(dt.timestamp())
+    except (TypeError, ValueError, IndexError):
+        return None
 
 class TempliteSyntaxError(ValueError):
     pass
@@ -1115,7 +1128,7 @@ def static_file(request, filename, root, mimetype=True, download=False, charset=
         mimetype += '; charset=%s' % charset
 
     if mimetype:
-        headers['Content-Type'] = mimetype
+        headers['Content-Type'] = str(mimetype)
 
     if download:
         download = os.path.basename(filename)
@@ -1123,25 +1136,30 @@ def static_file(request, filename, root, mimetype=True, download=False, charset=
         headers['Content-Disposition'] = 'attachment; filename="%s"' % download
 
     stats = os.stat(filename)
-    headers['Content-Length'] = clen = str(stats.st_size)
+
+    if not etag:
+        etag = '%d:%d:%d:%s:%s' % (stats.st_dev, stats.st_ino, stats.st_mtime,
+                                   stats.st_size, filename)
+        etag = hashlib.sha1(etag.encode()).hexdigest()
+
+    headers['ETag'] = etag
     headers['Last-Modified'] = email.utils.formatdate(stats.st_mtime, usegmt=True)
     headers['Date'] = email.utils.formatdate(time.time(), usegmt=True)
+    headers.setdefault('Content-Type', mimetype or 'application/octet-stream')
+    headers.setdefault('Cache-Control', 'public, max-age=0')
 
-    if etag is None:
-        etag = '%d:%d:%d:%s:%s' % (stats.st_dev, stats.st_ino, stats.st_mtime,
-                                   clen, filename)
-        etag = hashlib.sha1(etag.encode()).hexdigest()
-    else:
-        headers['ETag'] = etag
-        check = getenv('HTTP_IF_NONE_MATCH')
-        if check and check == etag:
-            return HTTPResponse(status=304, **headers)
+    if getenv('HTTP_IF_NONE_MATCH') == etag:
+        return HTTPResponse(status_code=304, headers=headers)
 
     if (ims := getenv('HTTP_IF_MODIFIED_SINCE')):
-        if (parsed_ims := parse_date(ims.split(";")[0].strip())) is not None and parsed_ims >= int(stats.st_mtime):
-            return HTTPResponse(status=304, **headers)
+        if (parsed_ims := parse_date(ims.split(';')[0].strip())) is not None:
+            if parsed_ims >= int(stats.st_mtime):
+                return HTTPResponse(status_code=304, headers=headers)
 
+    clen = str(stats.st_size)
+    headers['Content-Length'] = clen
     body = '' if request.method == 'HEAD' else open(filename, 'rb')
+
     return HTTPResponse(body.read(), 200, headers=headers, content_type=('Content-Type', mimetype))
 
 
