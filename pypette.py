@@ -8,11 +8,10 @@ License: MIT (see LICENSE for details)
 from __future__ import annotations
 
 import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pickle, re, os, time, traceback, urllib.parse, wsgiref
-
+from urllib.parse import urljoin
 from email.parser import HeaderParser
 
 PLAIN_TEXT = ('Content-Type', 'text/plain')
-
 
 class TempliteSyntaxError(ValueError):
     pass
@@ -1048,6 +1047,14 @@ class HTTPResponse:
         """
         self.set_cookie(key, value="", max_age=0, path=path,domain=domain)
 
+def redirect(request, url, code=None):
+    """Aborts execution and causes a 303 or 302 redirect, depending on
+       the HTTP protocol version. """
+    if not code:
+        code = 303 if request.request_protocol == "HTTP/1.1" else 302
+    res = HTTPResponse(body="", status_code=code)
+    res.set_header('Location', urljoin(request.raw_uri, url))
+    return res
 
 def static_file(request, filename, root, mimetype=True, download=False, charset='UTF-8', etag=None, headers=None):
     """ Open a file in a safe way and return an instance of `HTTPResponse`
