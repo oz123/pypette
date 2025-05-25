@@ -144,10 +144,16 @@ class Templite:
                             f"append_result(Templite(loader.get({repr(include_name)}), loader).render(context))"  # noqa
                         )
                     elif words[0] == "if":
-                        if len(words) != 2:
+                        if len(words) == 2:
+                            condition = self._expr_code(words[1])
+                        elif len(words) == 4 and words[2] == "==":
+                            left = self._expr_code(words[1])
+                            right = self._expr_code(words[3])
+                            condition = f"{left} == {right}"
+                        else:
                             self._syntax_error("Invalid if statement", token)
                         ops_stack.append("if")
-                        code.add_line(f"if {self._expr_code(words[1])}:")
+                        code.add_line(f"if {condition}:")
                         code.indent()
                     elif words[0] == "else":
                         if not ops_stack or ops_stack[-1] != "if":
