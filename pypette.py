@@ -85,7 +85,11 @@ class TemplateLoader:
             return f.read()
 
 class Templite:
-    """A simple template renderer, now integrated with TemplateLoader for {% include %}."""
+    """A simple template renderer. Extended coverage.py/templite
+    with extra features:
+     * include snippets with {% include %}
+     * if == <thing> support
+    """
     def __init__(self,
                  text: str,
                  loader: TemplateLoader | None = None,
