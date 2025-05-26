@@ -8,6 +8,8 @@ License: MIT (see LICENSE for details)
 from __future__ import annotations
 
 import base64, email, hashlib, hmac, http.cookies, http, io, mimetypes, json, pickle, re, os, time, traceback, urllib.parse, wsgiref
+import wsgiref.headers
+import wsgiref.util
 from urllib.parse import urljoin
 from email.utils import parsedate_to_datetime
 from email.parser import HeaderParser
